@@ -1,0 +1,534 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  ArrowLeft,
+  ArrowRight,
+  ArrowUpRight,
+  Bell,
+  Bookmark,
+  BookOpen,
+  CalendarDays,
+  Check,
+  CheckCheck,
+  CheckCircle2,
+  ChevronRight,
+  CircleAlert,
+  Clock3,
+  Cloud,
+  Compass,
+  Copy,
+  FileText,
+  Globe2,
+  GraduationCap,
+  Heart,
+  Inbox,
+  Layers3,
+  Library,
+  Link2,
+  LoaderCircle,
+  MessagesSquare,
+  Newspaper,
+  Paperclip,
+  Plus,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  Trophy,
+  Upload,
+  X,
+} from 'lucide-react'
+import { categoryMeta, initialItems, type Category, type InfoItem, type View } from './data'
+import GradientASCII from './GradientASCII'
+import SplitText from './SplitText'
+import WechatInbox from './WechatInbox'
+
+const navItems: { id: View; label: string; icon: typeof Inbox }[] = [
+  { id: 'today', label: '今日精选', icon: Inbox },
+  { id: 'library', label: '全部信息', icon: Library },
+  { id: 'wechat', label: '微信消息', icon: MessagesSquare },
+  { id: 'favorites', label: '我的收藏', icon: Bookmark },
+  { id: 'review', label: '完成回顾', icon: CheckCircle2 },
+]
+
+const categoryIcons = { 竞赛: Trophy, 新闻: Newspaper, 课程通知: GraduationCap }
+const subscriptionKey = (title: string) => title.trim().toLowerCase().replace(/[\s\-—_·，。、“”‘’（）()《》]/g, '')
+
+function Brand({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className="brand">
+      <span className="brand-mark"><Layers3 size={20} strokeWidth={2.2} /></span>
+      {!compact && <><span className="brand-name">Subscriber</span><span className="brand-beta">BETA</span></>}
+    </div>
+  )
+}
+
+function Tag({ category }: { category: Category }) {
+  const Icon = categoryIcons[category]
+  return <span className={`category-tag ${categoryMeta[category].className}`}><Icon size={12} />{category}</span>
+}
+
+function IconButton({ label, children, active = false, onClick, className = '' }: {
+  label: string
+  children: React.ReactNode
+  active?: boolean
+  onClick?: () => void
+  className?: string
+}) {
+  return <button type="button" aria-label={label} title={label} className={`icon-button ${active ? 'active' : ''} ${className}`} onClick={onClick}>{children}</button>
+}
+
+function ItemCard({ item, onOpen, onFavorite, onComplete }: {
+  item: InfoItem
+  onOpen: () => void
+  onFavorite: () => void
+  onComplete: () => void
+}) {
+  return (
+    <article className={`info-card ${item.completed ? 'is-completed' : ''}`}>
+      <button className="card-main" onClick={onOpen} aria-label={`查看${item.title}`}>
+        <div className="card-meta">
+          <Tag category={item.category} />
+          <span className="source-type">{item.sourceType}</span>
+          {item.priority === 'high' && !item.completed && <span className="priority-dot">重点关注</span>}
+        </div>
+        <h3>{item.title}</h3>
+        <p>{item.summary}</p>
+        <div className="card-footer">
+          <span className="source-name">{item.source}</span>
+          <span className="meta-separator" />
+          <span>{item.publishedAt}</span>
+          {item.deadline && <span className={`deadline ${item.daysLeft === 1 ? 'urgent' : ''}`}><Clock3 size={13} />{item.daysLeft}天后截止</span>}
+        </div>
+      </button>
+      <div className="card-actions">
+        <IconButton label={item.favorite ? '取消收藏' : '收藏'} active={item.favorite} onClick={onFavorite}><Bookmark size={18} fill={item.favorite ? 'currentColor' : 'none'} /></IconButton>
+        <IconButton label={item.completed ? '取消完成' : '标记完成'} active={item.completed} onClick={onComplete}><CheckCircle2 size={18} /></IconButton>
+      </div>
+    </article>
+  )
+}
+
+function EmptyState({ type, onReset }: { type: 'search' | 'favorite' | 'review'; onReset?: () => void }) {
+  const content = {
+    search: { icon: Search, title: '没有找到匹配的信息', text: '试试更换关键词或切换信息分类。' },
+    favorite: { icon: Bookmark, title: '收藏夹还是空的', text: '遇到想稍后阅读的内容，点击收藏就能在这里找到。' },
+    review: { icon: CheckCircle2, title: '还没有完成记录', text: '读完通知或参加活动后，手动标记完成即可生成回顾。' },
+  }[type]
+  const Icon = content.icon
+  return (
+    <div className="empty-state">
+      <span className="empty-icon"><Icon size={24} /></span>
+      <h3>{content.title}</h3><p>{content.text}</p>
+      {onReset && <button className="text-button" onClick={onReset}>清除筛选<ArrowRight size={15} /></button>}
+    </div>
+  )
+}
+
+function ModalShell({ title, eyebrow, onClose, children, wide = false, className = '' }: {
+  title: string
+  eyebrow?: string
+  onClose: () => void
+  children: React.ReactNode
+  wide?: boolean
+  className?: string
+}) {
+  const containerRef = useRef<HTMLElement | null>(null)
+  const closeRef = useRef<HTMLButtonElement | null>(null)
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    closeRef.current?.focus()
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [onClose])
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section ref={containerRef} className={`modal ${wide ? 'modal-wide' : ''} ${className}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>{eyebrow && <span className="eyebrow">{eyebrow}</span>}<h2>{title}</h2></div>
+          <button ref={closeRef} type="button" className="icon-button" aria-label="关闭" onClick={onClose}><X size={20} /></button>
+        </div>
+        {children}
+      </section>
+    </div>
+  )
+}
+
+function ImportModal({ onClose, onAdd, notify }: {
+  onClose: () => void
+  onAdd: (title: string, category: Category, source: string) => boolean
+  notify: (message: string) => void
+}) {
+  const [tab, setTab] = useState<'text' | 'file' | 'link'>('text')
+  const [text, setText] = useState('')
+  const [link, setLink] = useState('')
+  const [file, setFile] = useState<File | null>(null)
+  const [category, setCategory] = useState<Category>('竞赛')
+  const [error, setError] = useState('')
+  const [processing, setProcessing] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+
+  const chooseFile = (selected?: File) => {
+    setError('')
+    if (!selected) return
+    const allowed = ['txt', 'doc', 'docx', 'pdf', 'png', 'jpg', 'jpeg', 'ppt', 'pptx']
+    const extension = selected.name.split('.').pop()?.toLowerCase() || ''
+    if (!allowed.includes(extension)) { setError('首版仅支持文字、Word、PDF、图片和普通 PPT。'); return }
+    if (selected.size > 30 * 1024 * 1024) { setError('原型演示单个文件上限为 30 MB。'); return }
+    setFile(selected)
+  }
+
+  const submit = () => {
+    if (tab === 'text' && !text.trim()) { setError('请先粘贴需要整理的文字。'); return }
+    if (tab === 'link' && !/^https?:\/\/.+/.test(link.trim())) { setError('请输入以 http:// 或 https:// 开头的公开链接。'); return }
+    if (tab === 'file' && !file) { setError('请选择一个需要解析的文件。'); return }
+    setError('')
+    setProcessing(true)
+    timer.current = setTimeout(() => {
+      const title = tab === 'file' && file ? file.name.replace(/\.[^.]+$/, '') : tab === 'link' ? '公开链接导入的竞赛信息' : text.trim().split(/[\n。！？]/)[0].slice(0, 38) || '新导入的信息'
+      const source = tab === 'file' ? '本地上传 · 按需解析' : tab === 'link' ? '公开链接 · 用户导入' : '手动粘贴 · 用户导入'
+      const added = onAdd(title, category, source)
+      if (added) {
+        notify('已加入信息库，原型已生成模拟整理结果')
+        onClose()
+      } else {
+        setProcessing(false)
+      }
+    }, 1200)
+  }
+
+  return (
+    <ModalShell title="导入一条信息" eyebrow="MANUAL IMPORT" onClose={processing ? () => {} : onClose}>
+      <div className="import-tabs" role="tablist">
+        {([['text', FileText, '粘贴文字'], ['file', Upload, '上传文件'], ['link', Link2, '公开链接']] as const).map(([id, Icon, label]) => (
+          <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} onClick={() => { setTab(id); setError('') }}><Icon size={17} />{label}</button>
+        ))}
+      </div>
+      <div className="modal-body">
+        {tab === 'text' && <label className="field"><span>信息内容</span><textarea value={text} onChange={e => setText(e.target.value)} placeholder="粘贴竞赛通知、课程安排或新闻正文……" rows={7} autoFocus /></label>}
+        {tab === 'link' && <label className="field"><span>公开网页链接</span><div className="input-with-icon"><Link2 size={18} /><input value={link} onChange={e => setLink(e.target.value)} placeholder="https:// 公开且允许访问的页面" autoFocus /></div><small>正式版仅读取无需登录且允许使用的公开内容。</small></label>}
+        {tab === 'file' && <div className={`file-drop ${file ? 'has-file' : ''}`}>
+          <input id="file-input" type="file" accept=".txt,.doc,.docx,.pdf,.png,.jpg,.jpeg,.ppt,.pptx" onChange={e => chooseFile(e.target.files?.[0])} />
+          <label htmlFor="file-input">
+            {file ? <><span className="file-icon"><FileText size={23} /></span><strong>{file.name}</strong><span>{(file.size / 1024 / 1024).toFixed(2)} MB · 点击重新选择</span></> : <><span className="upload-icon"><Upload size={23} /></span><strong>选择需要整理的文件</strong><span>Word、PDF、图片或普通 PPT，最大 30 MB</span></>}
+          </label>
+        </div>}
+        <label className="field"><span>信息分类</span><div className="category-options">{(['竞赛', '新闻', '课程通知'] as Category[]).map(item => <button type="button" key={item} className={category === item ? 'selected' : ''} onClick={() => setCategory(item)}>{item}{category === item && <Check size={14} />}</button>)}</div></label>
+        <div className="privacy-note"><ShieldCheck size={18} /><p><strong>原文件按需上传</strong><span>原型不会读取或上传你的文件；正式版会在处理前明确提示。</span></p></div>
+        {error && <p className="form-error"><CircleAlert size={15} />{error}</p>}
+      </div>
+      <div className="modal-actions"><button className="button secondary" onClick={onClose} disabled={processing}>取消</button><button className="button primary" onClick={submit} disabled={processing}>{processing ? <><LoaderCircle className="spin" size={17} />正在模拟整理</> : <><Sparkles size={17} />开始整理</>}</button></div>
+    </ModalShell>
+  )
+}
+
+function DiscoverModal({ onClose, onAdd, notify, subscribedKeys }: {
+  onClose: () => void
+  onAdd: (title: string, category: Category, source: string) => boolean
+  notify: (message: string) => void
+  subscribedKeys: string[]
+}) {
+  const [query, setQuery] = useState('大学生 人工智能 创新竞赛')
+  const [loading, setLoading] = useState(false)
+  const [searched, setSearched] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+  const results = [
+    { title: '大学生人工智能创新应用竞赛作品征集', source: '高校创新实践中心 · 公开网页', deadline: '11月12日截止', text: '面向在校学生征集人工智能创新应用方案，需提交项目计划书与作品原型。' },
+    { title: '生成式人工智能应用设计校园赛通知', source: '计算机学院 · 公开公告', deadline: '11月18日截止', text: '鼓励围绕学习、公益与校园服务设计生成式人工智能应用，支持跨专业组队。' },
+  ]
+  const search = () => {
+    if (!query.trim()) return
+    setLoading(true); setSearched(false)
+    timer.current = setTimeout(() => { setLoading(false); setSearched(true) }, 1000)
+  }
+  return (
+    <ModalShell title="从公开网页发现" eyebrow="PUBLIC WEB DISCOVERY" onClose={onClose} wide>
+      <div className="modal-body">
+        <div className="search-disclosure"><Globe2 size={17} /><span>仅检索公开且允许使用的内容，结果保留来源供你核对。</span><span className="demo-label">模拟结果</span></div>
+        <form className="discover-search" onSubmit={e => { e.preventDefault(); search() }}><Search size={19} /><input aria-label="公开检索关键词" value={query} onChange={e => setQuery(e.target.value)} placeholder="输入竞赛名称、学校或关键词" /><button className="button primary" disabled={loading || !query.trim()}>{loading ? <LoaderCircle className="spin" size={17} /> : '检索'}</button></form>
+        {!searched && !loading && <div className="discover-placeholder"><span><Compass size={27} /></span><h3>从一个关键词开始</h3><p>正式版将搜索公开网页，提取日期和参赛要求，并让每条结论都能回到原文。</p><div className="suggestion-row"><button onClick={() => setQuery('大学生 数学建模 竞赛')}>数学建模</button><button onClick={() => setQuery('大学生 创新创业 项目申报')}>创新创业</button><button onClick={() => setQuery('大学生 英语 竞赛')}>英语竞赛</button></div></div>}
+        {loading && <div className="result-skeletons">{[1, 2].map(i => <div className="result-skeleton" key={i}><span /><span /><span /></div>)}</div>}
+        {searched && !loading && <div className="discover-results">
+          <div className="result-count">找到 2 条模拟信息 · 检索时间 刚刚</div>
+          {results.map(result => {
+            const subscribed = subscribedKeys.includes(subscriptionKey(result.title))
+            return <article className="discover-result" key={result.title}>
+              <div><div className="card-meta"><Tag category="竞赛" /><span className="deadline"><Clock3 size={13} />{result.deadline}</span></div><h3>{result.title}</h3><p>{result.text}</p><span className="result-source"><Globe2 size={13} />{result.source}</span></div>
+              <button className={`button ${subscribed ? 'collected' : 'secondary'}`} disabled={subscribed} onClick={() => { if (onAdd(result.title, '竞赛', result.source)) notify('已订阅并加入竞赛信息库') }}>{subscribed ? <><Check size={16} />已订阅</> : <><Plus size={16} />订阅</>}</button>
+            </article>
+          })}
+        </div>}
+      </div>
+    </ModalShell>
+  )
+}
+
+function DetailDrawer({ item, onClose, onFavorite, onLike, onComplete, notify }: {
+  item: InfoItem
+  onClose: () => void
+  onFavorite: () => void
+  onLike: () => void
+  onComplete: () => void
+  notify: (message: string) => void
+}) {
+  return (
+    <div className="drawer-backdrop" onMouseDown={onClose}>
+      <aside className="detail-drawer" role="dialog" aria-modal="true" aria-label="信息详情" onMouseDown={e => e.stopPropagation()}>
+        <div className="drawer-top"><button className="back-button" onClick={onClose}><ArrowLeft size={18} />返回</button><span className="demo-label">演示信息</span></div>
+        <div className="drawer-content">
+          <div className="card-meta"><Tag category={item.category} /><span className="source-type">{item.sourceType}</span></div>
+          <h2>{item.title}</h2>
+          <p className="detail-summary">{item.summary}</p>
+          <div className="detail-actions"><button className={`button ${item.completed ? 'completed' : 'primary'}`} onClick={onComplete}>{item.completed ? <><CheckCheck size={17} />已完成</> : <><Check size={17} />标记完成</>}</button><IconButton label={item.favorite ? '取消收藏' : '收藏'} active={item.favorite} onClick={onFavorite}><Bookmark size={19} fill={item.favorite ? 'currentColor' : 'none'} /></IconButton><IconButton label={item.liked ? '取消喜欢' : '喜欢'} active={item.liked} onClick={onLike}><Heart size={19} fill={item.liked ? 'currentColor' : 'none'} /></IconButton></div>
+          <section className="detail-section"><h3>关键信息</h3><dl className="key-info">
+            {item.deadline && <><dt>报名截止</dt><dd className="accent-text">{item.deadline}</dd></>}
+            {item.eventDate && <><dt>活动时间</dt><dd>{item.eventDate}</dd></>}
+            {item.location && <><dt>地点 / 方式</dt><dd>{item.location}</dd></>}
+            {item.eligibility && <><dt>参与对象</dt><dd>{item.eligibility}</dd></>}
+            {item.organizer && <><dt>主办方</dt><dd>{item.organizer}</dd></>}
+          </dl></section>
+          <section className="detail-section"><h3>需要留意</h3><ul className="key-points">{item.keyPoints.map(point => <li key={point}><Check size={15} />{point}</li>)}</ul></section>
+          <section className="evidence-section"><div className="evidence-title"><BookOpen size={16} /><h3>原文依据</h3></div><blockquote>{item.evidence}</blockquote><p>重要日期请以原始通知为准</p></section>
+          <div className="tag-list">{item.tags.map(tag => <span key={tag}>#{tag}</span>)}</div>
+        </div>
+        <div className="drawer-footer"><div><strong>{item.source}</strong><span>{item.publishedAt}</span></div><button className="button secondary" onClick={() => notify('原型保留原文入口，正式版将跳转到原始页面')}>查看原文<ArrowUpRight size={16} /></button></div>
+      </aside>
+    </div>
+  )
+}
+
+function DigestModal({ items, onClose, onOpenItem, notify }: { items: InfoItem[]; onClose: () => void; onOpenItem: (item: InfoItem) => void; notify: (message: string) => void }) {
+  const copyDigest = async () => {
+    const text = `Subscriber · 今日精选\n${items.map((item, index) => `${index + 1}. ${item.title}${item.deadline ? `（${item.deadline}截止）` : ''}`).join('\n')}`
+    try { await navigator.clipboard.writeText(text); notify('今日摘要已复制') } catch { notify('当前浏览器未允许复制，请稍后重试') }
+  }
+  return (
+    <ModalShell title="今天，值得关注这些" eyebrow="DAILY BRIEFING · 10/31" onClose={onClose} wide className="digest-modal">
+      <div className="digest-cover" aria-hidden="true">
+        <div>
+          <span className="eyebrow">TODAY&apos;S PICKS</span>
+          <h2>2 项竞赛临近截止，<br />1 门课程时间有调整。</h2>
+        </div>
+        <span className="digest-date">31<small>OCT</small></span>
+      </div>
+      <div className="digest-intro"><p>从 12 条新信息中，为你筛选出 <strong>{items.length} 条重点</strong>。优先处理临近截止的竞赛，再留意课程变化。</p></div>
+      <div className="digest-list">{items.map((item, index) => <button key={item.id} style={{ '--digest-index': index } as React.CSSProperties} onClick={() => { onClose(); onOpenItem(item) }}><span className="digest-index">0{index + 1}</span><div><Tag category={item.category} /><h3>{item.title}</h3><p>{item.summary}</p></div><ChevronRight size={19} /></button>)}</div>
+      <div className="modal-actions digest-actions">
+        <span className="ai-note"><Sparkles size={15} />原型摘要由演示数据生成</span>
+        <button className="button secondary" onClick={copyDigest}><Copy size={16} />复制摘要</button>
+        <button className="button primary" onClick={onClose}>开始浏览<ArrowRight size={16} /></button>
+      </div>
+    </ModalShell>
+  )
+}
+
+export default function App() {
+  const [view, setView] = useState<View>('today')
+  const [items, setItems] = useState<InfoItem[]>(initialItems)
+  const itemsRef = useRef<InfoItem[]>(initialItems)
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  const [discoverOpen, setDiscoverOpen] = useState(false)
+  const [digestOpen, setDigestOpen] = useState(() => !new URLSearchParams(window.location.search).get('share'))
+  const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState<'全部' | Category>('全部')
+  const [toast, setToast] = useState('')
+  const [isMobileViewport, setIsMobileViewport] = useState(() => window.innerWidth < 560)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const selected = items.find(item => item.id === selectedId) || null
+  const completed = items.filter(item => item.completed)
+  const dailyItems = items.filter(item => item.daily && !item.completed)
+  const hour = new Date().getHours()
+  const greeting = hour < 11 ? '早上好' : hour < 14 ? '中午好' : hour < 18 ? '下午好' : '晚上好'
+
+  const notify = useCallback((message: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    setToast(message)
+    toastTimer.current = setTimeout(() => setToast(''), 2800)
+  }, [])
+  useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current) }, [])
+  useEffect(() => {
+    const shareState = new URLSearchParams(window.location.search).get('share')
+    if (!shareState) return
+    window.history.replaceState({}, '', window.location.pathname)
+    if (shareState === 'received') setView('wechat')
+    else if (shareState === 'empty') notify('这次分享没有可导入的文字')
+    else if (shareState === 'error') notify('分享内容读取失败，请返回微信重试')
+  }, [notify])
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setSelectedId(null); setImportOpen(false); setDiscoverOpen(false); setDigestOpen(false) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  useEffect(() => { itemsRef.current = items }, [items])
+  useEffect(() => {
+    const updateViewport = () => setIsMobileViewport(window.innerWidth < 560)
+    window.addEventListener('resize', updateViewport)
+    return () => window.removeEventListener('resize', updateViewport)
+  }, [])
+
+  const updateItem = (id: number, update: Partial<InfoItem>) => setItems(current => current.map(item => item.id === id ? { ...item, ...update } : item))
+  const toggleFavorite = (id: number) => { const item = items.find(i => i.id === id); if (item) updateItem(id, { favorite: !item.favorite }) }
+  const toggleComplete = (id: number) => {
+    const item = items.find(i => i.id === id)
+    if (!item) return
+    updateItem(id, { completed: !item.completed, completedAt: !item.completed ? '今天' : undefined })
+    notify(!item.completed ? '已记入完成回顾' : '已取消完成标记')
+  }
+  const addItem = (title: string, category: Category, source: string): boolean => {
+    const key = subscriptionKey(title)
+    if (itemsRef.current.some(item => subscriptionKey(item.title) === key)) {
+      notify('这条内容已订阅，无需重复添加')
+      return false
+    }
+    const newItem: InfoItem = {
+      id: Date.now(), title, category, source, sourceType: source.includes('公开') ? '公开检索' : '用户导入',
+      summary: '这是原型生成的模拟摘要。正式版将在这里呈现 AI 从原始内容中提取的重点与待办。',
+      publishedAt: '刚刚', deadline: category === '竞赛' ? '日期待核对' : undefined,
+      tags: [category, '待核对'], favorite: false, liked: false, completed: false, priority: 'normal',
+      evidence: '原型未读取真实内容。正式版会在此展示与关键字段对应的原文段落，方便核对。',
+      keyPoints: ['核对原始来源与发布时间', '确认关键日期与参与要求', '补充个人待办或标记完成'],
+    }
+    const nextItems = [newItem, ...itemsRef.current]
+    itemsRef.current = nextItems
+    setItems(nextItems)
+    return true
+  }
+
+  const filteredItems = useMemo(() => items.filter(item => {
+    const matchView = view === 'favorites' ? item.favorite : view === 'review' ? item.completed : true
+    const matchFilter = filter === '全部' || item.category === filter
+    const keyword = search.trim().toLowerCase()
+    const matchSearch = !keyword || `${item.title}${item.summary}${item.source}${item.tags.join('')}`.toLowerCase().includes(keyword)
+    return matchView && matchFilter && matchSearch
+  }), [items, view, filter, search])
+
+  const navigate = (next: View) => { setView(next); setSearch(''); setFilter('全部'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
+  const openItem = (item: InfoItem) => setSelectedId(item.id)
+  const pageTitle = { today: '今日精选', library: '全部信息', wechat: '微信消息', favorites: '我的收藏', review: '完成回顾' }[view]
+
+  return (
+    <div className="app-shell">
+      <div className="app-backdrop" aria-hidden="true">
+        <GradientASCII
+          colors={['#12291F', '#274C3B', '#4F7B67', '#8FAF9B', '#A5633D']}
+          shape="horizon"
+          characters=" .:-=+*xX#"
+          cellSize={isMobileViewport ? 15 : 17}
+          density={isMobileViewport ? 0.32 : 0.4}
+          glyphOpacity={isMobileViewport ? 0.4 : 0.6}
+          gradientOpacity={0.16}
+          glow={0.1}
+          depthOfField={0}
+          flicker={0.05}
+          softness={0.8}
+          scale={1.25}
+          flow={0.32}
+          speed={digestOpen ? 0 : 0.18}
+          grain={0.03}
+          variation={1}
+          mouseInteraction
+          scrambleRadius={0.07}
+          clickEffect="none"
+          intro={!digestOpen}
+          lightMode
+          dpr={1}
+          fontFamily="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+        />
+      </div>
+      <div className="app-veil" aria-hidden="true" />
+
+      <header className="topnav">
+        <div className="topnav-inner">
+          <div className="topnav-brand"><Brand /><span className="workspace-label">我的信息空间</span></div>
+          <nav className="main-nav" aria-label="主要导航">
+            {navItems.map(item => {
+              const Icon = item.icon
+              return (
+                <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => navigate(item.id)}>
+                  <Icon size={17} /><span>{item.label}</span>
+                  {item.id === 'today' && <span className="nav-count">{dailyItems.length}</span>}
+                  {item.id === 'favorites' && <span className="nav-count muted">{items.filter(i => i.favorite).length}</span>}
+                </button>
+              )
+            })}
+          </nav>
+          <div className="topbar-actions">
+            <form className="global-search" onSubmit={e => { e.preventDefault(); navigate('library') }}><Search size={17} /><input aria-label="搜索全部信息" value={search} onChange={e => setSearch(e.target.value)} placeholder="搜索竞赛、课程或来源……" /><kbd>Enter</kbd></form>
+            <button className="discover-button" onClick={() => setDiscoverOpen(true)}><Globe2 size={16} /><span className="discover-text">公开检索</span><span className="new-badge">NEW</span></button>
+            <button className="button primary topnav-import" onClick={() => setImportOpen(true)}><Plus size={17} />导入新信息</button>
+            <IconButton label="通知" onClick={() => notify('你有 2 条竞赛即将截止')}><Bell size={19} /><span className="notification-dot" /></IconButton>
+            <button className="mobile-add icon-button" aria-label="导入新信息" onClick={() => setImportOpen(true)}><Plus size={20} /></button>
+            <button className="topnav-profile" onClick={() => notify('账号设置将在正式版接入')} aria-label="林同学 · 个人空间"><span className="avatar">林</span></button>
+          </div>
+        </div>
+      </header>
+
+      <main className="main-area">
+
+        <div className="page-content">
+          {view === 'today' && <>
+            <section className="page-heading today-heading"><div><span className="eyebrow">SATURDAY · OCTOBER 31</span><SplitText tag="h1" text={`${greeting}，林同学`} effect="rise" splitType="chars" delay={52} duration={0.85} staggerFrom="start" trigger="load" textAlign="center" className="split-heading" /><p>今天不必看完所有消息，先处理真正重要的事。</p></div><span className="demo-chip"><span />演示原型</span></section>
+            <div className="today-grid">
+              <div className="today-main">
+                <section className="hero-panel">
+                  <span className="briefing-label"><Sparkles size={15} />今日知单</span>
+                  <h2>12 条新信息里，<br />这 <em>{dailyItems.length}</em> 件值得你看。</h2>
+                  <p>2 项竞赛临近截止，1 门课程时间有调整。</p>
+                  <div className="hero-actions">
+                    <button className="button primary" onClick={() => setDigestOpen(true)}>阅读完整摘要<ArrowRight size={17} /></button>
+                    <span className="hero-privacy"><ShieldCheck size={14} />原文件仅按需上传</span>
+                  </div>
+                </section>
+                <section className="section-block today-section"><div className="section-heading"><div><h2>今日精选</h2><span>{dailyItems.length} 条</span></div><button className="text-button" onClick={() => navigate('library')}>查看全部<ArrowRight size={15} /></button></div><div className="info-list">{dailyItems.map(item => <ItemCard key={item.id} item={item} onOpen={() => openItem(item)} onFavorite={() => toggleFavorite(item.id)} onComplete={() => toggleComplete(item.id)} />)}</div></section>
+              </div>
+              <aside className="right-rail today-rail">
+                <section className="rail-section deadline-section"><div className="section-heading"><h2>接下来</h2><CalendarDays size={18} /></div><div className="timeline">{items.filter(i => i.deadline && i.daysLeft).sort((a, b) => (a.daysLeft || 0) - (b.daysLeft || 0)).slice(0, 3).map(item => <button key={item.id} onClick={() => openItem(item)}><span className={`timeline-date ${item.daysLeft === 1 ? 'urgent' : ''}`}><strong>{item.deadline?.split('月')[1].split('日')[0]}</strong><small>11月</small></span><span><strong>{item.title}</strong><small>{item.daysLeft}天后截止</small></span></button>)}</div><button className="rail-link" onClick={() => { navigate('library'); setFilter('竞赛') }}>全部竞赛安排<ChevronRight size={15} /></button></section>
+                <section className="rail-section review-preview"><div className="section-heading"><h2>本周完成</h2><CheckCircle2 size={18} /></div><div className="review-number"><strong>{completed.length}</strong><span>项已完成<small>每一步都有迹可循</small></span></div><div className="completion-track"><span style={{ width: `${Math.min(completed.length * 12 + 20, 100)}%` }} /></div><p>比上周同期多完成 1 项</p><button className="rail-link" onClick={() => navigate('review')}>查看完成回顾<ChevronRight size={15} /></button></section>
+                <section className="rail-section source-status"><div className="source-status-icon"><Cloud size={20} /></div><div><strong>云端同步 · 设计预览</strong><span>正式版将保存收藏与完成记录</span></div><span className="sync-dot" /></section>
+              </aside>
+            </div>
+          </>}
+
+          {view === 'wechat' && <WechatInbox addItem={addItem} notify={notify} />}
+
+          {(view === 'library' || view === 'favorites') && <>
+            <section className="page-heading library-heading"><div><span className="eyebrow">{view === 'library' ? 'INFORMATION LIBRARY' : 'SAVED FOR LATER'}</span><SplitText tag="h1" text={pageTitle} effect="rise" splitType="chars" delay={58} duration={0.8} staggerFrom="start" trigger="load" textAlign="left" className="split-heading" /><p>{view === 'library' ? '所有导入与发现的信息，都在这里有序归档。' : '把值得关注的内容留给合适的时间。'}</p></div><button className="button primary desktop-page-action" onClick={() => setImportOpen(true)}><Plus size={17} />导入信息</button></section>
+            <div className="library-toolbar"><div className="filter-tabs">{(['全部', '竞赛', '新闻', '课程通知'] as const).map(item => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item}<span>{item === '全部' ? items.filter(i => view === 'library' || i.favorite).length : items.filter(i => (view === 'library' || i.favorite) && i.category === item).length}</span></button>)}</div><span className="result-total">{filteredItems.length} 条结果</span></div>
+            {search && <div className="active-search"><Search size={15} />“{search}” 的搜索结果<button onClick={() => setSearch('')}><X size={14} /></button></div>}
+            <div className="info-list library-list">{filteredItems.map(item => <ItemCard key={item.id} item={item} onOpen={() => openItem(item)} onFavorite={() => toggleFavorite(item.id)} onComplete={() => toggleComplete(item.id)} />)}</div>
+            {filteredItems.length === 0 && <EmptyState type={view === 'favorites' && !search && filter === '全部' ? 'favorite' : 'search'} onReset={() => { setSearch(''); setFilter('全部') }} />}
+          </>}
+
+          {view === 'review' && <>
+            <section className="page-heading"><div><span className="eyebrow">PROGRESS, NOT PRESSURE</span><SplitText tag="h1" text="完成回顾" effect="rise" splitType="chars" delay={58} duration={0.8} staggerFrom="start" trigger="load" textAlign="left" className="split-heading" /><p>不只看还有多少要做，也看看你已经走了多远。</p></div><span className="date-range"><CalendarDays size={16} />10月26日—11月1日</span></section>
+            <section className="review-hero"><div><span className="briefing-label"><Sparkles size={15} />本周回顾</span><h2>你完成了 <em>{completed.length}</em> 件事，<br />也为下一次出发留出了空间。</h2><p>本周你参与了 {completed.filter(i => i.category === '课程通知').length} 项课程与活动，关注了 {items.filter(i => i.category === '竞赛' && i.completed).length} 项竞赛。完成记录均由你手动勾选，Subscriber只做整理。</p><button className="light-button" onClick={() => notify('已根据最新完成记录刷新摘要')}><Sparkles size={16} />刷新回顾摘要</button></div><div className="review-stats"><div><strong>{completed.length}</strong><span>完成项目</span></div><div><strong>{items.filter(i => i.liked).length}</strong><span>喜欢内容</span></div><div><strong>{items.filter(i => i.favorite).length}</strong><span>收藏信息</span></div></div></section>
+            <section className="section-block completed-section"><div className="section-heading"><div><h2>已完成的项目</h2><span>{completed.length} 条</span></div><span className="manual-note"><CheckCheck size={15} />手动记录</span></div><div className="completed-list">{completed.map(item => <article key={item.id}><span className="completed-check"><Check size={17} /></span><button className="completed-copy" onClick={() => openItem(item)}><span><Tag category={item.category} /><small>{item.completedAt}完成</small></span><h3>{item.title}</h3><p>{item.summary}</p></button><IconButton label="取消完成" onClick={() => toggleComplete(item.id)}><RotateCcwIcon /></IconButton></article>)}</div>{completed.length === 0 && <EmptyState type="review" />}</section>
+          </>}
+        </div>
+      </main>
+
+      <nav className="mobile-nav" aria-label="移动端导航">{navItems.map(item => { const Icon = item.icon; return <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => navigate(item.id)}><Icon size={20} /><span>{item.label.replace('我的', '').replace('全部信息', '信息库')}</span></button> })}</nav>
+
+      {importOpen && <ImportModal onClose={() => setImportOpen(false)} onAdd={addItem} notify={notify} />}
+      {discoverOpen && <DiscoverModal onClose={() => setDiscoverOpen(false)} onAdd={addItem} notify={notify} subscribedKeys={items.map(item => subscriptionKey(item.title))} />}
+      {selected && <DetailDrawer item={selected} onClose={() => setSelectedId(null)} onFavorite={() => toggleFavorite(selected.id)} onLike={() => updateItem(selected.id, { liked: !selected.liked })} onComplete={() => toggleComplete(selected.id)} notify={notify} />}
+      {digestOpen && <DigestModal items={dailyItems} onClose={() => setDigestOpen(false)} onOpenItem={openItem} notify={notify} />}
+      {toast && <div className="toast" role="status"><CheckCircle2 size={18} />{toast}</div>}
+    </div>
+  )
+}
+
+function RotateCcwIcon() {
+  return <ArrowLeft size={18} />
+}

@@ -1,0 +1,31 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+release/
+desktop-dist/
+build/icon.ico
+tsconfig.tsbuildinfo
+
+# 测试与截图
+test-results/
+playwright-report/
+shots/
+
+# 本地调试脚本（以点开头的一次性脚本）
+.*.mjs
+
+# 工具内部记录
+.workbuddy/
+
+# 本地环境与日志
+.env
+.env.*
+*.log
+npm-debug.log*
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini

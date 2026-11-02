@@ -1,0 +1,88 @@
+{
+  "name": "subscriber-campus-digest-prototype",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "playwright test",
+    "desktop": "npm run build && node electron/launch.cjs",
+    "desktop:dev": "node electron/launch.cjs --dev",
+    "desktop:icon": "node electron/make-icon.cjs",
+    "desktop:verify": "node electron/verify-package.mjs",
+    "desktop:pack": "npm run build && electron-builder --win --dir",
+    "desktop:build": "npm run build && electron-builder --win",
+    "desktop:portable": "npm run build && node electron/build-portable.cjs"
+  },
+  "dependencies": {
+    "@gsap/react": "^2.1.2",
+    "gsap": "^3.15.0",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0",
+    "png-to-ico": "^3.0.2",
+    "tailwindcss": "^4.0.0",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.5"
+  },
+  "main": "electron/main.cjs",
+  "description": "Subscriber —— 面向大学生的一站式信息订阅桌面应用",
+  "author": {
+    "name": "Subscriber"
+  },
+  "build": {
+    "appId": "com.subscriber.campus",
+    "productName": "Subscriber",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "compression": "maximum",
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Subscriber",
+      "artifactName": "Subscriber-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Subscriber-Portable-${version}.${ext}"
+    }
+  }
+}
