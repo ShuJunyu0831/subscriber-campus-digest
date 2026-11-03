@@ -45,7 +45,7 @@ npm test         # Playwright 端到端测试（18 组）
 ```bash
 npm run desktop           # 构建后以 Electron 直接运行
 npm run desktop:portable  # 组装免安装包到 desktop-dist/Subscriber
-npm run desktop:verify    # 拉起打包后的 exe 做 13 项端到端检查
+npm run desktop:verify    # 拉起打包后的 exe 做 16 项端到端检查
 ```
 
 `desktop:portable` 不使用 electron-builder 的 nsis 目标，而是自行「复制运行时 + 生成 asar + 单文件改名 + 写入图标与版本信息」，全程不做大目录重命名与批量删除。图标由 `build/icon.png` 经 `npm run desktop:icon` 生成七尺寸 `.ico`，再用 `resedit` 写入 PE 资源。
