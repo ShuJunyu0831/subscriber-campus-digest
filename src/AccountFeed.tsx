@@ -9,6 +9,7 @@ import {
   Info,
   LoaderCircle,
   MailOpen,
+  MessageSquare,
   Plus,
   RefreshCw,
   Rss,
@@ -40,6 +41,17 @@ import {
 import { findExistingItem, parseDateText, similarity, type Classification, type LibraryClassification } from './classify'
 import type { InfoItem } from './data'
 import { readPreference, writePreference } from './localStore'
+import {
+  fetchWechatArticle,
+  isWechatArticleUrl,
+  mergeWechatArticle,
+  readWechatSubs,
+  removeWechatAccount,
+  saveWechatSubs,
+  wechatRecordToArticle,
+  type ParsedWechatArticle,
+  type WechatAccountSub,
+} from './wechatArticle'
 
 type Relation = 'new' | 'duplicate' | 'update' | 'outdated'
 
@@ -63,6 +75,9 @@ interface AccountFeedProps {
 const READ_KEY = 'subscriber-account-read'
 const SYNC_KEY = 'subscriber-account-synced'
 const CATEGORY_FILTERS = ['全部', '竞赛', '课程通知', '新闻'] as const
+
+/** 用户粘贴文章链接订阅来的公众号账号前缀。 */
+const WECHAT_PREFIX = 'wx:'
 
 function relationOf(article: AccountArticle, library: Classification[]): { relation: Relation; existing?: InfoItem } {
   const match = findExistingItem(library.map(entry => entry.item), article)
@@ -89,6 +104,11 @@ function isRssGroup(account: OfficialAccount): boolean {
   return account.id.startsWith('rss:')
 }
 
+/** 用户粘贴文章链接订阅的公众号，表现为 wx:<biz> 的账号。 */
+function isWechatGroup(account: OfficialAccount): boolean {
+  return account.id.startsWith(WECHAT_PREFIX)
+}
+
 export default function AccountFeed({ library, subscribed, onToggleSubscribe, onImportArticle, notify }: AccountFeedProps) {
   const [readIds, setReadIds] = useState<string[]>(() => readPreference<string[]>(READ_KEY, []))
   const [synced, setSynced] = useState<boolean>(() => readPreference<boolean>(SYNC_KEY, false))
@@ -108,6 +128,11 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
   const [draftName, setDraftName] = useState('')
   const [draftUrl, setDraftUrl] = useState('')
   const [draftBusy, setDraftBusy] = useState(false)
+  const [wechatSubs, setWechatSubs] = useState<WechatAccountSub[]>(() => readWechatSubs())
+  const [wxOpen, setWxOpen] = useState(false)
+  const [wxInput, setWxInput] = useState('')
+  const [wxBusy, setWxBusy] = useState(false)
+  const [wxError, setWxError] = useState('')
 
   useEffect(() => { writePreference(READ_KEY, readIds) }, [readIds])
   useEffect(() => { writePreference(SYNC_KEY, synced) }, [synced])
@@ -164,11 +189,102 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
     defaultSubscribed: true,
   })), [subscriptions])
 
-  const activeIds = useMemo(() => [...subscribed, ...rssAccounts.map(account => account.id)], [subscribed, rssAccounts])
-  const accountLookup = useMemo(
-    () => new Map([...accountById, ...rssAccounts.map(account => [account.id, account] as const)]),
-    [rssAccounts],
+  /* --------------------------- 公众号链接订阅 --------------------------- */
+
+  /** 用户粘贴链接订阅来的公众号，同样映射成「账号」，复用分组与入库。 */
+  const wechatAccounts = useMemo<OfficialAccount[]>(() => wechatSubs.map(sub => ({
+    id: `${WECHAT_PREFIX}${sub.id}`,
+    name: sub.name,
+    handle: sub.handle ?? `${sub.articles.length} 篇文章`,
+    org: '公众号 · 链接订阅',
+    description: '你粘贴文章链接后识别出的公众号，正文来自原文页面。',
+    trust: 'official',
+    trustLabel: '公众号订阅',
+    topics: [],
+    avatar: sub.name.slice(0, 1),
+    accent: '#3c7a4f',
+    subscribers: '—',
+    cadence: '按链接更新',
+    defaultSubscribed: true,
+  })), [wechatSubs])
+
+  const wechatArticles = useMemo<AccountArticle[]>(
+    () => wechatSubs.flatMap(sub => sub.articles.map((record, index) => wechatRecordToArticle(sub, record, index))),
+    [wechatSubs],
   )
+
+  const activeIds = useMemo(
+    () => [...subscribed, ...rssAccounts.map(account => account.id), ...wechatAccounts.map(account => account.id)],
+    [subscribed, rssAccounts, wechatAccounts],
+  )
+  const accountLookup = useMemo(
+    () => new Map([
+      ...accountById,
+      ...rssAccounts.map(account => [account.id, account] as const),
+      ...wechatAccounts.map(account => [account.id, account] as const),
+    ]),
+    [rssAccounts, wechatAccounts],
+  )
+
+  /** 桌面版走主进程抓取；浏览器版直接 fetch，跨域失败时给明确提示。 */
+  const loadWechatArticle = useCallback(async (url: string): Promise<ParsedWechatArticle> => {
+    const bridge = window.subscriberDesktop?.fetchWechatArticle
+    if (bridge) {
+      const result = await bridge(url)
+      if (!result.ok || !result.article) throw new Error(result.message || '抓取失败')
+      return result.article
+    }
+    return fetchWechatArticle(url)
+  }, [])
+
+  const addWechatArticles = async () => {
+    const urls = Array.from(new Set(
+      wxInput.split(/[\s，,；;]+/).map(item => item.trim()).filter(Boolean),
+    ))
+    if (urls.length === 0) { setWxError('请先粘贴至少一个公众号文章链接'); return }
+    const invalid = urls.filter(url => !isWechatArticleUrl(url))
+    if (invalid.length > 0) {
+      setWxError(`这 ${invalid.length} 个不是公众号文章链接（需要 mp.weixin.qq.com 开头）：${invalid[0].slice(0, 60)}`)
+      return
+    }
+
+    setWxBusy(true)
+    setWxError('')
+    let next = wechatSubs
+    let added = 0
+    let skipped = 0
+    const failures: string[] = []
+    for (const url of urls) {
+      try {
+        const parsed = await loadWechatArticle(url)
+        const result = mergeWechatArticle(next, parsed)
+        next = result.list
+        if (result.duplicated) skipped += 1
+        else added += 1
+      } catch (error) {
+        failures.push(error instanceof Error ? error.message : '抓取失败')
+      }
+    }
+    setWechatSubs(next)
+    saveWechatSubs(next)
+    setWxBusy(false)
+
+    if (added + skipped > 0) {
+      setWxOpen(false)
+      setWxInput('')
+    }
+    const parts = [`新增 ${added} 篇`]
+    if (skipped > 0) parts.push(`${skipped} 篇已在列表里`)
+    if (failures.length > 0) { parts.push(`${failures.length} 篇失败`); setWxError(failures[0]) }
+    notify(parts.join('，'))
+  }
+
+  const removeWechatAccountById = (accountId: string) => {
+    const next = removeWechatAccount(wechatSubs, accountId.replace(WECHAT_PREFIX, ''))
+    setWechatSubs(next)
+    saveWechatSubs(next)
+    notify('已取消这个公众号的订阅，已入库的信息会保留')
+  }
 
   const addSubscription = async () => {
     const url = draftUrl.trim()
@@ -202,13 +318,13 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
   }
 
   const articles = useMemo(
-    () => [...rssArticles, ...(synced ? incomingArticles : []), ...accountArticles],
-    [rssArticles, synced],
+    () => [...wechatArticles, ...rssArticles, ...(synced ? incomingArticles : []), ...accountArticles],
+    [wechatArticles, rssArticles, synced],
   )
 
   const subscribedAccounts = useMemo(
-    () => [...officialAccounts, ...rssAccounts].filter(account => activeIds.includes(account.id)),
-    [activeIds, rssAccounts],
+    () => [...officialAccounts, ...wechatAccounts, ...rssAccounts].filter(account => activeIds.includes(account.id)),
+    [activeIds, wechatAccounts, rssAccounts],
   )
 
   const visibleArticles = useMemo(() => articles.filter(article => {
@@ -335,6 +451,26 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
           })}
           <button type="button" className="account-discover" onClick={() => setManagerOpen(true)}><Plus size={15} />发现更多公众号</button>
 
+          <div className="account-rss wechat-subs">
+            <div className="account-rss-head">
+              <h3>公众号链接订阅</h3>
+              <button type="button" className="text-button" onClick={() => { setWxError(''); setWxOpen(true) }}><Plus size={13} />订阅</button>
+            </div>
+            {wechatSubs.length === 0 && (
+              <p className="account-rss-empty">把任意一篇公众号文章链接粘进来，就能识别出是哪个公众号并保留正文。公众号没有开放历史文章接口，更新靠你继续贴链接，或用下面的 RSS。</p>
+            )}
+            {wechatSubs.map(sub => (
+              <div className="account-rss-row" key={sub.id}>
+                <span className="account-rss-dot wechat" aria-hidden="true" />
+                <div>
+                  <strong>{sub.name}</strong>
+                  <small>{sub.articles.length} 篇 · 链接抓取</small>
+                </div>
+                <button type="button" aria-label={`取消订阅${sub.name}`} onClick={() => removeWechatAccountById(`${WECHAT_PREFIX}${sub.id}`)}><Trash2 size={13} /></button>
+              </div>
+            ))}
+          </div>
+
           <div className="account-rss">
             <div className="account-rss-head">
               <h3>我的 RSS 订阅</h3>
@@ -388,7 +524,7 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
             </div>
           </div>
 
-          <p className="feed-note"><ShieldCheck size={13} />演示环境：文章为本地示例数据，不会访问微信服务器；重复转载已按标题与事件指纹自动合并。</p>
+          <p className="feed-note"><ShieldCheck size={13} />内置账号是演示数据，不会访问微信服务器；粘贴文章链接订阅的公众号与 RSS 源是真实抓取，转载重复已按标题与事件指纹自动合并。</p>
 
           {grouped.length === 0 && (
             <div className="empty-state account-empty">
@@ -405,11 +541,13 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
                 <span className="account-avatar" style={{ background: group.account.accent }}>{group.account.avatar}</span>
                 <div>
                   <strong>{group.account.name}</strong>
-                  <small>{group.account.trustLabel} · {group.entries.length} 条{isRssGroup(group.account) ? ' · 来自你添加的订阅源' : ''}</small>
+                  <small>{group.account.trustLabel} · {group.entries.length} 条{isRssGroup(group.account) ? ' · 来自你添加的订阅源' : isWechatGroup(group.account) ? ' · 来自你粘贴的文章链接' : ''}</small>
                 </div>
                 {isRssGroup(group.account)
                   ? <span className="trust-chip rss"><Rss size={11} />真实抓取</span>
-                  : <span className={`trust-chip ${group.account.trust}`}>{group.account.trust === 'official' ? '官方' : group.account.trust === 'media' ? '媒体' : '非官方'}</span>}
+                  : isWechatGroup(group.account)
+                    ? <span className="trust-chip wechat"><MessageSquare size={11} />链接抓取</span>
+                    : <span className={`trust-chip ${group.account.trust}`}>{group.account.trust === 'official' ? '官方' : group.account.trust === 'media' ? '媒体' : '非官方'}</span>}
               </header>
               <div className="feed-articles">
                 {group.entries.map(entry => {
@@ -487,7 +625,7 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
               <button type="button" className="icon-button" aria-label="关闭" onClick={() => setManagerOpen(false)}><X size={20} /></button>
             </div>
             <div className="modal-body">
-              <div className="search-disclosure"><ShieldCheck size={16} /><span>微信没有开放第三方读取个人订阅号的接口，正式版需要你授权 RSS 或开放平台凭据；此处为演示数据。</span></div>
+              <div className="search-disclosure"><ShieldCheck size={16} /><span>微信没有开放第三方读取个人订阅号的接口，下面这些内置账号是演示数据；真实内容请用左侧「公众号链接订阅」粘贴文章链接，或添加 RSS 订阅源。</span></div>
               <div className="account-manager-list">
                 {officialAccounts.map(account => {
                   const active = subscribed.includes(account.id)
@@ -533,11 +671,43 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
         </div>
       )}
 
+      {wxOpen && (
+        <div className="modal-backdrop" onMouseDown={() => { if (!wxBusy) setWxOpen(false) }}>
+          <section className="modal" role="dialog" aria-modal="true" aria-label="订阅公众号" onMouseDown={event => event.stopPropagation()}>
+            <div className="modal-header">
+              <div><span className="eyebrow">粘贴文章链接订阅</span><h2>订阅公众号</h2></div>
+              <button type="button" className="icon-button" aria-label="关闭" onClick={() => setWxOpen(false)} disabled={wxBusy}><X size={20} /></button>
+            </div>
+            <div className="modal-body">
+              <div className="search-disclosure"><ShieldCheck size={16} /><span>微信没有开放「按账号拉取历史文章」的接口，所以订阅从一篇具体文章开始：你给出链接，我们只抓这一页，识别公众号并保留标题与正文。可以一次粘多条，同一公众号会自动归到一起。</span></div>
+              <label className="field"><span>公众号文章链接</span>
+                <textarea
+                  aria-label="公众号文章链接"
+                  value={wxInput}
+                  onChange={event => setWxInput(event.target.value)}
+                  rows={6}
+                  placeholder={'https://mp.weixin.qq.com/s/xxxxxxxx\n每行一条，可以一次多个'}
+                  autoFocus
+                />
+                <small>必须是 mp.weixin.qq.com 的文章链接；桌面版可直接抓取，浏览器版需要该页面允许跨域。</small>
+              </label>
+              {wxError && <p className="form-error"><CircleAlert size={15} />{wxError}</p>}
+              <div className="privacy-note"><Info size={17} /><p><strong>只抓你给出的链接</strong><span>不会遍历该公众号的其他文章，也不会请求你的微信账号。</span></p></div>
+            </div>
+            <div className="modal-actions">
+              <span className="ai-note"><Info size={14} />识别失败不会留下空订阅</span>
+              <button className="button secondary" onClick={() => setWxOpen(false)} disabled={wxBusy}>取消</button>
+              <button className="button primary" onClick={addWechatArticles} disabled={wxBusy}>{wxBusy ? <><LoaderCircle className="spin" size={15} />正在抓取</> : <><Plus size={15} />抓取并订阅</>}</button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {reader && (
         <div className="modal-backdrop" onMouseDown={() => setReader(null)}>
           <section className="modal modal-wide article-reader" role="dialog" aria-modal="true" aria-label="文章全文预览" onMouseDown={event => event.stopPropagation()}>
             <div className="modal-header">
-              <div><span className="eyebrow">{reader.article.fullTextOrigin === 'rss' ? 'RSS 全文 · 真实抓取' : 'ARTICLE READER · 演示全文'}</span><h2>{reader.article.title}</h2></div>
+              <div><span className="eyebrow">{reader.article.fullTextOrigin === 'rss' ? 'RSS 全文 · 真实抓取' : reader.article.fullTextOrigin === 'wechat' ? '公众号原文 · 链接抓取' : 'ARTICLE READER · 演示全文'}</span><h2>{reader.article.title}</h2></div>
               <button type="button" className="icon-button" aria-label="关闭" onClick={() => setReader(null)}><X size={20} /></button>
             </div>
             <div className="modal-body reader-body">
@@ -551,11 +721,15 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
               </div>
               {reader.article.fullText
                 ? <div className="reader-text">{reader.article.fullText.map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div>
-                : <div className="reader-empty"><Info size={17} /><p><strong>这篇只有摘要</strong><span>演示数据未收录本篇全文，正式版会在获得授权后读取公众号原文。</span></p></div>}
+                : <div className="reader-empty"><Info size={17} /><p><strong>{reader.article.fullTextOrigin === 'wechat' ? '这篇只拿到了标题与摘要' : '这篇只有摘要'}</strong><span>{reader.article.fullTextOrigin === 'wechat'
+                  ? '可能是页面被拦截或正文结构与预期不同，点击下方「原文链接」可以看到完整内容。'
+                  : '演示数据未收录本篇全文，正式版会在获得授权后读取公众号原文。'}</span></p></div>}
               <div className="feed-keywords">{reader.article.keywords.map(keyword => <span key={keyword}>#{keyword}</span>)}</div>
               <p className="reader-note"><ShieldCheck size={13} />{reader.article.fullTextOrigin === 'rss'
                 ? '正文由你添加的订阅源提供，抓取后未经改写；如需核对请打开原文链接。'
-                : '演示全文仅用于展示阅读体验，不代表真实公众号内容；正文以原文链接为准。'}</p>
+                : reader.article.fullTextOrigin === 'wechat'
+                  ? '正文由你粘贴的文章链接抓取，未经改写；公众号页面结构变化时会退化为只保留标题与摘要。'
+                  : '演示全文仅用于展示阅读体验，不代表真实公众号内容；正文以原文链接为准。'}</p>
             </div>
             <div className="modal-actions">
               {reader.article.officialUrl && <a className="button secondary" href={reader.article.officialUrl} target="_blank" rel="noopener noreferrer">原文链接<ArrowUpRight size={14} /></a>}

@@ -72,7 +72,7 @@ function unwrapCdata(raw: string): string {
   return cdata ? cdata[1] : raw
 }
 
-function decodeEntities(input: string): string {
+export function decodeEntities(input: string): string {
   return input
     .replace(/&nbsp;/g, ' ')
     .replace(/&mdash;/g, '—')
@@ -105,7 +105,7 @@ function plainText(html: string): string {
 }
 
 /** 标题等短文本：只去标签与实体，不做「段落至少 8 字」的过滤。 */
-function bareText(html: string): string {
+export function bareText(html: string): string {
   return decodeEntities(unwrapCdata(html).replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim()
 }
 

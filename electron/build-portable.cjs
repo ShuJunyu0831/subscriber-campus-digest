@@ -70,7 +70,7 @@ async function main() {
   }
   fs.mkdirSync(path.join(stageDir, 'electron'), { recursive: true })
   fs.cpSync(path.join(root, 'dist'), path.join(stageDir, 'dist'), { recursive: true, force: true })
-  for (const file of ['main.cjs', 'preload.cjs']) {
+  for (const file of ['main.cjs', 'preload.cjs', 'share-args.cjs']) {
     fs.copyFileSync(path.join(root, 'electron', file), path.join(stageDir, 'electron', file))
   }
   // electron/live/collector.cjs 由 npm run collect 生成（esbuild 打包 src/liveSource.ts + src/rss.ts）。

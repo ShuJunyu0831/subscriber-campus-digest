@@ -1,11 +1,33 @@
 const { app, BrowserWindow, Menu, shell, ipcMain, clipboard } = require('electron')
 const path = require('node:path')
+const { parseShareArgs } = require('./share-args.cjs')
 
 const DEV_URL = 'http://127.0.0.1:5173'
 const devMode = process.argv.includes('--dev')
 
 /** @type {BrowserWindow | null} */
 let mainWindow = null
+
+/* ------------------------------------------------------------------ *
+ * 外部转发接收（微信 / 钉钉「转发到其他应用」、协议链接、命令行）
+ *
+ * 应用能不能出现在微信的转发列表里由系统与微信决定，我们控制不了；
+ * 但只要被选中（或用户用 subscriber:// 链接 / 启动参数），内容就会进队列，
+ * 渲染进程拉取后直接打开批量导入，不需要用户再复制粘贴。
+ * ------------------------------------------------------------------ */
+const shareQueue = []
+
+function pushShares(items) {
+  if (!Array.isArray(items) || items.length === 0) return
+  shareQueue.push(...items)
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.webContents.send('share:pending', shareQueue.length)
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+ipcMain.handle('share:pull', () => shareQueue.splice(0))
 
 // 官网直采采集器（scripts/collect.mjs 打包产出；缺失时返回提示而不是崩溃）
 let liveCollector = null
@@ -96,6 +118,27 @@ ipcMain.handle('clipboard:read', () => {
   }
 })
 
+/**
+ * 公众号文章：用户粘贴链接，主进程抓这一页并解析出账号名与正文（浏览器有跨域限制）。
+ * 只抓用户给出的这一个 URL，不遍历该账号的其他文章。
+ */
+ipcMain.handle('wechat:fetch-article', async (_event, url) => {
+  const target = typeof url === 'string' ? url.trim() : ''
+  if (!/^https?:\/\/mp\.weixin\.qq\.com\/s(\/|\?|$)/i.test(target)) {
+    return { ok: false, message: '请填写 mp.weixin.qq.com 的公众号文章链接', article: null }
+  }
+  const collector = loadLiveCollector()
+  if (!collector || typeof collector.fetchWechatArticle !== 'function') {
+    return { ok: false, message: '公众号解析器未打包（需先运行 npm run collect）', article: null }
+  }
+  try {
+    const article = await collector.fetchWechatArticle(target)
+    return { ok: true, message: `已识别公众号「${article.accountName}」`, article }
+  } catch (error) {
+    return { ok: false, message: error && error.message ? error.message : '抓取失败', article: null }
+  }
+})
+
 function resolveIndex() {  return path.join(__dirname, '..', 'dist', 'index.html')
 }
 
@@ -160,7 +203,9 @@ if (!app.requestSingleInstanceLock()) {
   // 已经有实例在运行，交给它处理
   app.quit()
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
+    // 第二次启动往往就是「转发到 Subscriber」：argv 里带着内容
+    pushShares(parseShareArgs(argv))
     if (!mainWindow) return
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.focus()
@@ -169,6 +214,19 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     // 桌面应用不需要 Electron 默认菜单
     Menu.setApplicationMenu(null)
+
+    // 注册 subscriber:// 协议，让「能打开链接的地方」都能把内容交给 Subscriber。
+    // 开发模式下注册的是 electron.exe，会污染注册表，所以只在打包版注册。
+    if (!devMode && !process.defaultApp) {
+      try {
+        app.setAsDefaultProtocolClient('subscriber')
+      } catch {
+        // 注册失败不影响其它入口
+      }
+    }
+
+    // 首次启动也可能带着内容（从转发列表直接拉起）
+    pushShares(parseShareArgs(process.argv))
 
     // 禁止任何 webview 挂载
     app.on('web-contents-created', (_event, contents) => {

@@ -7,3 +7,5 @@ export { fetchLiveCompetitions } from '../src/liveSource'
 export { fetchCustomSource } from '../src/liveSource'
 // 桌面版主进程用同一个解析器抓 RSS，避免浏览器跨域限制（ipc: rss:fetch）
 export { fetchFeed } from '../src/rss'
+// 公众号文章链接解析（ipc: wechat:fetch-article）
+export { fetchWechatArticle } from '../src/wechatArticle'

@@ -67,6 +67,8 @@ interface WechatInboxProps {
   /** 关注源由 App 持有：信息库要按它过滤官网条目 */
   follows: FollowedSource[]
   onFollowsChange: (next: FollowedSource[]) => void
+  /** 外部转发进来的内容（App 收到后切到本页并传进来），stamp 变化即重新导入一次 */
+  incoming?: { text: string; stamp: number } | null
 }
 
 const SUBSCRIPTION_KEY = 'subscriber-account-subs'
@@ -103,7 +105,7 @@ function InlineModal({ title, eyebrow, children, onClose, wide = false }: {
   )
 }
 
-export default function WechatInbox({ addItem, notify, modelName, library, onImportArticle, follows, onFollowsChange }: WechatInboxProps) {
+export default function WechatInbox({ addItem, notify, modelName, library, onImportArticle, follows, onFollowsChange, incoming }: WechatInboxProps) {
   const isDesktopShell = Boolean(window.subscriberDesktop?.isDesktop)
   const canReadClipboard = Boolean(window.subscriberDesktop?.readClipboard)
 
@@ -127,6 +129,7 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
   const [analysisNote, setAnalysisNote] = useState('')
   const [confirmClear, setConfirmClear] = useState(false)
   const [rulesOpen, setRulesOpen] = useState(false)
+  const [dragging, setDragging] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => { writePreference(SUBSCRIPTION_KEY, subscribed) }, [subscribed])
@@ -285,6 +288,41 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
     notify(`已切到批量导入：把「${name}」里转发出来的卡片内容粘贴进来`)
   }
 
+  /**
+   * 外部转发接收：App 抓到队列内容后会切到本页并把文本传进来，
+   * 这里直接按批量导入拆好给用户确认（不再需要复制粘贴）。
+   */
+  useEffect(() => {
+    if (!incoming?.text.trim()) return
+    openBatch('wechat', incoming.text)
+    notify('已接收外部转发的内容，确认拆分后再保存到本机')
+  }, [incoming?.stamp, incoming?.text, openBatch, notify])
+
+  /** 把转发的聊天记录文件 / 选中的文字直接拖进来。 */
+  const handleDrop = async (event: React.DragEvent) => {
+    event.preventDefault()
+    setDragging(false)
+    const data = event.dataTransfer
+    const chunks: string[] = []
+    for (const file of Array.from(data.files ?? []).slice(0, 10)) {
+      const textLike = file.type.startsWith('text/') || /\.(txt|md|markdown|log|html?|json|csv)$/i.test(file.name)
+      if (!textLike || file.size > 2 * 1024 * 1024) continue
+      try {
+        chunks.push(await file.text())
+      } catch {
+        // 单个文件读不出来就跳过，不影响其余内容
+      }
+    }
+    const plain = data.getData('text/plain')
+    if (plain.trim()) chunks.push(plain)
+    if (chunks.length === 0) {
+      notify('没有读到可导入的文字：试试复制后点「从剪贴板读取」，或把 .txt 聊天记录拖进来')
+      return
+    }
+    openBatch('wechat', chunks.join('\n\n'))
+    notify(`已接收 ${chunks.length} 段内容，确认拆分后再保存`)
+  }
+
   const removeMessage = async (id: string) => {
     try {
       await deleteLocalMessage(id)
@@ -438,7 +476,7 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
         <div className="share-privacy-copy">
           <span className="briefing-label"><ShieldCheck size={15} />本地优先</span>
           <h2>不读你的聊天记录，<br />只收你主动贴过来的那几段。</h2>
-          <p>微信和钉钉都没有面向第三方应用的消息读取接口。Subscriber 用系统分享入口和粘贴接收你主动选择的内容，不接入协议机器人，也不会在后台扫描聊天。</p>
+          <p>微信和钉钉都没有面向第三方应用的消息读取接口。Subscriber 用系统分享入口、转发到 Subscriber、粘贴或拖放来接住你主动选择的内容，不接入协议机器人，也不会在后台扫描聊天。</p>
           <div className="wechat-hero-actions">
             <button className="light-button" onClick={() => openBatch('wechat')}><Layers size={16} />批量粘贴导入</button>
             {canReadClipboard && <button className="wechat-demo-button" onClick={importFromClipboard}><ClipboardPaste size={15} />从剪贴板读取</button>}
@@ -446,7 +484,7 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
           </div>
         </div>
         <div className="privacy-flow" aria-label="隐私处理流程">
-          <div><span>01</span><p><strong>在微信 / 钉钉里复制</strong><small>你主动选择消息或转发卡片</small></p><MessagesSquare size={18} /></div>
+          <div><span>01</span><p><strong>多选后转发</strong><small>转发到其他应用，或复制粘贴</small></p><MessagesSquare size={18} /></div>
           <ChevronRight size={15} className="flow-arrow" />
           <div><span>02</span><p><strong>保存到本机</strong><small>IndexedDB 本地消息箱</small></p><HardDrive size={18} /></div>
           <ChevronRight size={15} className="flow-arrow" />
@@ -458,7 +496,29 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
         ? '桌面版没有系统分享面板可用：在微信或钉钉里复制消息，回到这里点“从剪贴板读取”或“批量粘贴导入”，内容依旧只存在本机。'
         : '系统分享入口是否出现在微信面板，取决于手机系统、微信版本和是否已安装 Subscriber。找不到时，请复制消息后点击“批量粘贴导入”。'}</p>
 
-      <section className="local-inbox-section">
+      <div className="share-entry-ways">
+        <div>
+          <strong>① 转发到其他应用</strong>
+          <span>微信 / 钉钉里多选群消息 → 转发 → 转发到其他应用 → 在列表里选 Subscriber，内容会直接进入批量导入。{isDesktopShell
+            ? '这个列表由微信和 Windows 决定，如果没看到 Subscriber，用下面两种方式。'
+            : '手机上还需要把 Subscriber 装成 PWA，桌面版请用下面两种方式。'}</span>
+        </div>
+        <div>
+          <strong>② 从剪贴板读取</strong>
+          <span>{canReadClipboard ? '在微信里复制后点一下“从剪贴板读取”，只在你点击时读一次，不监听剪贴板。' : '复制消息后回到这里点“批量粘贴导入”，粘贴一次就能拆成多条。'}</span>
+        </div>
+        <div>
+          <strong>③ 拖进来 / 批量粘贴</strong>
+          <span>把转发出来的聊天记录文件（.txt / .html）直接拖到下方消息箱，或点“批量导入”粘贴多段文字。</span>
+        </div>
+      </div>
+
+      <section
+        className={`local-inbox-section ${dragging ? 'dropping' : ''}`}
+        onDragOver={event => { event.preventDefault(); setDragging(true) }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+      >
         <div className="section-heading local-inbox-heading">
           <div><h2>本机消息箱</h2><span>{messages.length} 条</span>{analysisNote && <span className="analysis-note">{analysisNote}</span>}</div>
           <div className="inbox-heading-tools">

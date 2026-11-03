@@ -8,7 +8,7 @@
 ## 一、一句话现状
 
 Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 GitHub 私有仓库，
-`npm test` **20 组 Playwright 全绿**、`npm run build` 通过。
+`npm test` **22 组 Playwright 全绿**、`npm run build` 通过。
 
 本轮（11-03）补齐了四件事：**信息分类/版本/去重引擎、公众号订阅、赛事官网一键入口、右下角模型选择**；
 随后打通了 **P0 真实数据链路**（`npm run collect` 官网直采 + 快照 + 桌面版实时抓取，详见待办区 P0）、
@@ -17,6 +17,9 @@ Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 
 以及 **P1 真实订阅源**（温医大学生处直采、RSS/Atom 真实订阅、桌面版主进程抓取，详见待办区 P1）。
 最新一轮（同日）按「服务想参加竞赛的学生」的定位加了两个功能：**多渠道批量导入 + 勾选后逐条 AI 分析**
 与 **自选关注竞赛官网 / 微信小程序**（详见待办区 P5），导航里的「微信消息」因此改名为「消息与订阅」。
+随后补上了 **公众号链接订阅**（粘贴任意一篇公众号文章链接即可识别账号并抓正文，详见待办区 P6），
+并把微信入口从「复制粘贴」升级成**系统转发链路**：`subscriber://share` 协议、`--share-text` / `--share-file` 启动参数、
+二次启动推进队列、拖放文件、剪贴板读取，五条路都汇入同一个批量导入拆分（详见待办区 P6-B）。
 现在四个直采源合计 24 条真实条目；仍然没做的是安装包签名与 NSIS 安装包（P3）。
 
 ---
@@ -28,13 +31,13 @@ Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 
 ```bash
 npm install
 npm run dev              # 开发：http://127.0.0.1:5173
-npm test                 # Web 端 20 组 Playwright（约 42 秒）
+npm test                 # Web 端 22 组 Playwright（约 50 秒）
 npm run build            # 类型检查 + 生产构建
 npm run collect          # 真实抓取竞赛官网 → src/live/competitions.json + 桌面版采集器
 
 npm run desktop          # 直接以 Electron 运行
 npm run desktop:portable # 重新打免安装包 → desktop-dist/Subscriber（会先 collect --lenient）
-npm run desktop:verify   # 拉起打包后的 exe 跑 17 项检查（含 IPC 探针）
+npm run desktop:verify   # 拉起打包后的 exe 跑 18 项检查（含 IPC 探针）
 ```
 
 演示时可以按这条路径走一遍（能一次看完四个新功能）：
@@ -130,6 +133,7 @@ src/
   liveSnapshot.ts     快照 → InfoItem 转换、抓取时间展示
   live/competitions.json  真实抓取快照（npm run collect 产出，提交入库）
   rss.ts              RSS 2.0 / Atom 解析、订阅增删、条目 → 文章/入库输入（三端复用）
+  wechatArticle.ts    公众号文章页解析（biz/nickname/ct/正文）、链接订阅存储、记录 → AccountArticle
   accounts.ts         公众号与文章演示数据、可信度等级
   AccountFeed.tsx     订阅页（内置账号 + RSS 订阅、分组、筛选、同步、查重、入库）
   TaxonomyModal.tsx   分类规则与版本记录说明
@@ -146,10 +150,11 @@ src/
   data.ts             演示数据、InfoItem / NewItemInput / AddItemResult 类型
   index.css           全部样式（新功能样式集中在文件末尾）
 scripts/collect.mjs   真实采集脚本（esbuild 打包 liveSource → Node 抓取 → 写快照 + 桌面版采集器）
-electron/             主进程（IPC：live:fetch / live:fetch-custom / rss:fetch / clipboard:read）、打包、图标、验证脚本
+electron/             主进程（IPC：live:fetch / live:fetch-custom / rss:fetch / wechat:fetch-article / clipboard:read / share:pull）、打包、图标、验证脚本
+electron/share-args.cjs  外部转发参数解析（协议链接 / --share-text / --share-file），纯函数、被验证脚本直接断言
 electron/live/        collector.cjs（npm run collect 生成，已 gitignore）
 .github/workflows/ci.yml  CI：build + Playwright（Node 20 + Chromium）
-tests/prototype.spec.ts   20 组 Playwright 用例
+tests/prototype.spec.ts   22 组 Playwright 用例
 ```
 
 ---
@@ -310,6 +315,36 @@ B. 自选关注竞赛官网与小程序（`src/follows.ts`、`FollowSources.tsx`
   **不假装能订阅小程序内容**：小程序没有公开读取接口，正文只能靠用户转发。
 - 测试：新增 2 组（批量导入 → 渠道筛选 → 全选 → 逐条分析入库；关注源勾选影响信息库 + 自定义官网跨域提示 + 小程序登记导入）。
 
+**P6 — 公众号订阅与「转发到其他应用」接收（2026-11-03）**
+
+A. 公众号链接订阅（`src/wechatArticle.ts` 新建、`AccountFeed.tsx`）
+- 微信不开放历史文章接口，所以走「粘贴任意一篇文章链接 → 抓那一页 → 归到该账号」：
+  `isWechatArticleUrl()` 只认 `mp.weixin.qq.com/s`；`parseWechatArticle()` 从 `og:title` / `activity-name` 取标题，
+  `var nickname` / `biz` / `user_name` 识别账号（`readJsVar()` 处理 `\xNN` 与 `\uNNNN` 转义），
+  `var ct` 转发布时间，`#js_content` 区域取正文（区域右边界截到 `js_pc_qr_code` / `rich_media_tool` / `js_cmt_area`）。
+- 正文 `<section>` 先统一换成 `</p>` 再交给 `htmlToParagraphs()`，否则微信的段式排版会被并成一整段。
+- 存储：localStorage `subscriber-wechat-account-subs`，同账号自动聚合，按 url 去重，每个账号保留最近 30 篇（`mergeWechatArticle()`）。
+- 界面：左栏「公众号链接订阅」区块可一次粘多条链接（空格/逗号/分号分隔），结果汇总「新增 N 篇 / N 篇已在列表里 / N 篇失败」。
+  分组头徽标「链接抓取」，阅读弹窗 eyebrow「公众号原文 · 链接抓取」。抓不到正文时明说「这篇只拿到了标题与摘要」，不许编。
+- 桌面版走 `wechat:fetch-article` IPC（主进程校验域名后再抓），浏览器版受 CORS 限制会直接提示「请在桌面版里订阅」。
+
+B. 从「转发到其他应用」接收（`electron/share-args.cjs` 新建、`main.cjs`、`preload.cjs`、`App.tsx`、`WechatInbox.tsx`）
+- 三条自动通道全部汇入同一个批量导入拆分：
+  - 自定义协议 `subscriber://share?text=...`（`app.setAsDefaultProtocolClient('subscriber')`，仅打包态注册）；
+  - 启动参数 `--share-text "..."` / `--share-file 聊天记录.txt`（微信转发聊天记录生成的文件直接传路径）；
+  - 程序已在运行时再次被唤起：`second-instance` 里解析 argv 推进 `shareQueue`，不重开窗口。
+- `shareQueue` + `share:pull` IPC（取走即清空）+ `share:pending` 事件（只发数量，用来唤醒渲染层）。
+  渲染层 `pullIncomingShares()` 拉取 → `App.tsx` 切到「消息与订阅」→ `WechatInbox` 收到 `incoming` 自动打开批量导入。
+- 两条手动入口：拖放文件/选中文字（`dataTransfer.files` + `getData('text/plain')`，≤2MB）、「从剪贴板读取」。
+- 界面上有一块「三种进法」说明（`.share-entry-ways`），把路径讲清楚，不让用户猜。
+- **诚实边界（必须原样保留在界面与文档里）**：微信「转发到其他应用」里显示哪些应用，由微信客户端和 Windows 注册表共同决定，
+  第三方应用无法自行插入那个列表。所以界面上同时给出启动参数快捷方式、拖放、剪贴板三条替代路径。
+
+C. 验证
+- `electron/verify-package.mjs` 追加 `parseShareArgs` 纯函数断言、用临时 `.txt` 走 `--share-file` 启动并断言
+  「外部转发内容自动进入批量导入」「转发内容被拆成可保存的条目」「转发文件里的来源名被识别」，检查项 16 → **18**。
+- Playwright 新增 2 组（公众号链接订阅识别账号读正文并入库；拖入文件/文字进入批量导入），共 **22 组**。
+
 ---
 
 ## 八、环境事实与坑（重要，能省很多时间）
@@ -328,6 +363,11 @@ B. 自选关注竞赛官网与小程序（`src/follows.ts`、`FollowSources.tsx`
 | Electron 二进制 | 若 `node_modules/electron/dist` 为空：`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ node node_modules/electron/install.js`。 |
 | 依赖网络 | `npm install` 偶发超时，加 `--registry=https://registry.npmmirror.com`。 |
 | 本地预览 | `npm run dev` 必须用后台任务方式启动，否则会话结束进程会被回收；Playwright 的 `webServer` 也会自己拉起。 |
+| `<label>` 包住按钮组 | 渠道选择器原来写成 `<label>来源渠道<div>按钮…</div></label>`，label 的文本会被拼进首个按钮的可访问名，`getByRole('button', { name: '钉钉' })` 直接 strict violation 命中 2 个元素。改成 `<div role="group" aria-label="来源渠道">`。 |
+| `inline-flex` 被拉满 | `.channel-picker` 放在 `flex-direction: column` 的 `.field` 里，`inline-flex` 仍会被拉伸成整行灰条；要补 `align-self: flex-start; width: fit-content`。 |
+| python 批量替换遇 CRLF 静默失败 | 文件是 CRLF，脚本里用 LF 拼的 `old` 永远匹配不到；再叠加「只断言替换后存在」的写法，会静默漏改。批量替换改用 Edit 工具，或按 `\r\n` 构造。 |
+| 命令行参数丢换行 | Windows 下 `--share-text "第一行\n第二行"` 传不进 Electron，拆分结果为 0 条。验证脚本改用 `--share-file` 传临时 `.txt`，真实链路也一样稳。 |
+| 弹窗叠弹窗点不到 | `desktop:verify` 里首屏摘要弹框的 `.modal-backdrop` 层级更高，会拦住后面的批量导入弹窗点击。先关摘要弹框，再操作下层弹窗。 |
 
 ---
 
@@ -336,7 +376,7 @@ B. 自选关注竞赛官网与小程序（`src/follows.ts`、`FollowSources.tsx`
 直接粘贴：
 
 > 继续 Subscriber 项目，路径 `D:/workbuddy/2026-10-31-18-32-31`，先读 `HANDOFF.md` 和
-> `.workbuddy/memory/` 下的记录。Web 版与 Windows 桌面版都已完成，`npm test` 20 组全绿，
+> `.workbuddy/memory/` 下的记录。Web 版与 Windows 桌面版都已完成，`npm test` 22 组全绿，
 > 已具备分类/版本/去重引擎、公众号订阅与 RSS 真实订阅、四个官网直采源、赛事官网入口与模型选择。
 > 我想继续做 **（写你这次要做的具体事）**。
 

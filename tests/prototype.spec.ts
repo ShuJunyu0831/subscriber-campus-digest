@@ -581,3 +581,85 @@ test('关注源可自选竞赛官网与微信小程序', async ({ page }) => {
   await batch.getByRole('button', { name: '取消' }).click()
   await expect(batch).toBeHidden()
 })
+
+test('粘贴公众号文章链接即可订阅：识别账号、读正文并入库', async ({ page }) => {
+  const articleHtml = `<!doctype html><html><head>
+<meta property="og:title" content="关于举办2026年校园程序设计竞赛的通知">
+<meta property="og:description" content="面向全校本科生，三人组队，11月20日前在教务系统报名。">
+<meta property="og:site_name" content="温医大竞赛中心">
+</head><body>
+<h1 id="activity-name">关于举办2026年校园程序设计竞赛的通知</h1>
+<script>
+var nickname = "温医大竞赛中心";
+var user_name = "gh_abc123";
+var biz = "MzA5MTIzNDU2Nw==";
+var ct = "1762000000";
+</script>
+<div id="js_content">
+<section><p>面向全校本科生，三人组队参赛，每队不超过三人，可跨年级组队。</p></section>
+<section>报名截止时间为 11 月 20 日 23:59，逾期不再补报。</section>
+</div>
+<div id="js_pc_qr_code">扫码关注</div>
+</body></html>`
+
+  await page.route('https://mp.weixin.qq.com/s/**', route => route.fulfill({
+    status: 200,
+    contentType: 'text/html; charset=utf-8',
+    headers: { 'access-control-allow-origin': '*' },
+    body: articleHtml,
+  }))
+
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /消息与订阅/ }).click()
+  await page.getByRole('tab', { name: /公众号订阅/ }).click()
+
+  await page.locator('.wechat-subs').getByRole('button', { name: '订阅' }).click()
+  const dialog = page.getByRole('dialog', { name: '订阅公众号' })
+  await expect(dialog).toBeVisible()
+  await dialog.getByLabel('公众号文章链接').fill('https://mp.weixin.qq.com/s/AbCdEf123')
+  await dialog.getByRole('button', { name: '抓取并订阅' }).click()
+  await expect(dialog).toBeHidden()
+
+  // 公众号被识别成账号，文章归到它下面，并标注内容来自链接抓取
+  const group = page.locator('.feed-group').filter({ hasText: '温医大竞赛中心' })
+  await expect(group).toBeVisible()
+  await expect(group.locator('.trust-chip.wechat')).toContainText('链接抓取')
+  await expect(group).toContainText('关于举办2026年校园程序设计竞赛的通知')
+
+  // 正文来自页面 #js_content，不是编造的
+  await group.locator('.feed-title').click()
+  await group.getByRole('button', { name: '阅读全文' }).click()
+  const reader = page.getByRole('dialog', { name: '文章全文预览' })
+  await expect(reader.locator('.eyebrow')).toContainText('公众号原文 · 链接抓取')
+  await expect(reader.locator('.reader-text')).toContainText('逾期不再补报')
+  await reader.getByRole('button', { name: '加入信息库' }).click()
+  await expect(reader).toBeHidden()
+
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  await expect(page.locator('.library-list')).toContainText('校园程序设计竞赛')
+})
+
+test('拖入聊天记录文件或选中的文字即可进入批量导入', async ({ page }) => {
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /消息与订阅/ }).click()
+
+  await page.evaluate(() => {
+    const target = document.querySelector('.local-inbox-section') as HTMLElement
+    const data = new DataTransfer()
+    data.items.add(new File(['蓝桥杯备赛群\n省赛 11 月 25 日开始报名。'], 'chat.txt', { type: 'text/plain' }))
+    data.setData('text/plain', 'ACM 集训队通知群\n校赛报名 11 月 18 日截止。')
+    const fire = (type: string) => target.dispatchEvent(
+      new DragEvent(type, { dataTransfer: data, bubbles: true, cancelable: true }),
+    )
+    fire('dragover')
+    fire('drop')
+  })
+
+  const dialog = page.getByRole('dialog', { name: '批量导入消息' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.locator('.batch-preview-head')).toContainText('2 条')
+  await dialog.getByRole('button', { name: /仅保存到本机（2 条）/ }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page.locator('.local-message')).toHaveCount(2)
+  await expect(page.locator('.local-message-list')).toContainText('蓝桥杯备赛群')
+})

@@ -1151,3 +1151,21 @@ html { scrollbar-width: thin; scrollbar-color: rgba(45, 98, 82, .28) transparent
   .follow-add .button { width: 100%; }
   .channel-filter .channel-select-all { margin-left: 0; }
 }
+
+/* ---------- P6：公众号链接订阅 ---------- */
+.trust-chip.wechat { display: inline-flex; align-items: center; gap: 3px; background: #e8f2e9; color: #3c7a4f; }
+.account-rss-dot.wechat { background: #3c7a4f; }
+.account-rss.wechat-subs { border-color: #d9e6dc; background: rgba(248,252,248,.7); }
+.account-rss.wechat-subs .account-rss-row button:hover { background: #e8f2e9; color: #3c7a4f; }
+
+/* ---------- P6：转发进来的三条入口 ---------- */
+.share-entry-ways { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin: 0 0 18px; }
+.share-entry-ways > div { padding: 12px 14px; border: 1px solid #e6ebe4; border-radius: 11px; background: rgba(255,255,255,.72); }
+.share-entry-ways strong { display: block; font-size: 10.5px; color: #33403a; margin-bottom: 5px; }
+.share-entry-ways span { font-size: 9px; line-height: 1.75; color: #8b958d; }
+.local-inbox-section { border-radius: 16px; transition: background .18s, box-shadow .18s; }
+.local-inbox-section.dropping { background: #f0f7f1; box-shadow: inset 0 0 0 2px rgba(45,98,82,.35); }
+.local-inbox-section.dropping::after {
+  content: '松手即可导入：文字与 .txt/.html 聊天记录都支持';
+  display: block; margin: 10px 2px 0; font-size: 9.5px; color: var(--accent);
+}

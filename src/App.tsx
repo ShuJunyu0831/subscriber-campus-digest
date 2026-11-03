@@ -619,6 +619,8 @@ export default function App() {
   const [toast, setToast] = useState('')
   const [modelId, setModelId] = useState(() => readPreference<string>(MODEL_KEY, DEFAULT_MODEL_ID))
   const [follows, setFollows] = useState<FollowedSource[]>(() => readFollows())
+  /** 外部转发进来的内容：收到就切到消息页并打开批量导入 */
+  const [incomingShare, setIncomingShare] = useState<{ text: string; stamp: number } | null>(null)
   const [isMobileViewport, setIsMobileViewport] = useState(() => window.innerWidth < 560)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const model = resolveModel(modelId)
@@ -690,6 +692,27 @@ export default function App() {
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current) }, [])
   useEffect(() => { writePreference(MODEL_KEY, modelId) }, [modelId])
   useEffect(() => { saveFollows(follows) }, [follows])
+  /**
+   * 桌面版：接住外部转发进来的内容（「转发到其他应用」选 Subscriber、
+   * subscriber:// 链接、--share-text 启动参数）。队列由主进程持有，这里取走即清空，
+   * 所以不会重复处理同一条。
+   */
+  useEffect(() => {
+    const bridge = window.subscriberDesktop
+    if (!bridge?.pullIncomingShares) return
+    let active = true
+    const take = async () => {
+      const items = await bridge.pullIncomingShares?.().catch(() => []) ?? []
+      if (!active || items.length === 0) return
+      const text = items.map(item => item.text).filter(Boolean).join('\n\n')
+      if (!text.trim()) return
+      setView('wechat')
+      setIncomingShare({ text, stamp: Date.now() })
+    }
+    void take()
+    const off = bridge.onIncomingShare?.(() => { void take() })
+    return () => { active = false; off?.() }
+  }, [])
   useEffect(() => {
     const shareState = new URLSearchParams(window.location.search).get('share')
     if (!shareState) return
@@ -919,7 +942,7 @@ export default function App() {
             </div>
           </>}
 
-          {view === 'wechat' && <WechatInbox addItem={addItem} notify={notify} modelName={model.name} library={library} onImportArticle={importArticle} follows={follows} onFollowsChange={setFollows} />}
+          {view === 'wechat' && <WechatInbox addItem={addItem} notify={notify} modelName={model.name} library={library} onImportArticle={importArticle} follows={follows} onFollowsChange={setFollows} incoming={incomingShare} />}
 
           {(view === 'library' || view === 'favorites') && <>
             <section className="page-heading library-heading"><div><span className="eyebrow">{view === 'library' ? 'INFORMATION LIBRARY' : 'SAVED FOR LATER'}</span><SplitText tag="h1" text={pageTitle} effect="rise" splitType="chars" delay={58} duration={0.8} staggerFrom="start" trigger="load" textAlign="left" className="split-heading" /><p>{view === 'library' ? '所有导入与发现的信息，已按事件归并、去重并标注版本。' : '把值得关注的内容留给合适的时间。'}</p></div><button className="button primary desktop-page-action" onClick={() => setImportOpen(true)}><Plus size={17} />导入信息</button></section>

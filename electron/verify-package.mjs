@@ -5,7 +5,9 @@
  * 用法：node electron/verify-package.mjs [exe 路径]
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { _electron as electron } from '@playwright/test'
 
@@ -37,8 +39,37 @@ if (!fs.existsSync(exePath)) {
 }
 fs.mkdirSync(shotDir, { recursive: true })
 
+// 0. 转发参数解析：纯函数，先验一遍再启动应用，失败时能立刻定位到解析而不是打包
+const { parseShareArgs } = createRequire(import.meta.url)('../electron/share-args.cjs')
+const forwarded = parseShareArgs([
+  'Subscriber.exe',
+  'subscriber://share?text=%E7%AB%9E%E8%B5%9B%E9%80%9A%E7%9F%A5%EF%BC%9A11%E6%9C%8820%E6%97%A5%E6%88%AA%E6%AD%A2',
+  '--share-text',
+  '第二段内容',
+])
+check(
+  '协议链接与命令行转发都能解析',
+  forwarded.length === 2 && forwarded[0].text === '竞赛通知：11月20日截止' && forwarded[1].text === '第二段内容',
+  JSON.stringify(forwarded)
+)
+check('无关启动参数不会被当成转发内容', parseShareArgs(['Subscriber.exe', '--dev', '.']).length === 0)
+
 console.log(`验证目标：${exePath}`)
-const app = await electron.launch({ executablePath: exePath, env })
+// 模拟「转发到其他应用」：微信把转发的聊天记录落成文件，再用 Subscriber 打开它
+const tempShare = path.join(os.tmpdir(), `subscriber-verify-share-${process.pid}.txt`)
+fs.writeFileSync(tempShare, [
+  'ACM 集训队通知群',
+  '校赛报名 11 月 18 日截止，三人一队。',
+  '',
+  '蓝桥杯备赛群',
+  '省赛 11 月 25 日开始报名。',
+].join('\n'), 'utf8')
+
+const app = await electron.launch({
+  executablePath: exePath,
+  env,
+  args: ['--share-file', tempShare],
+})
 const page = await app.firstWindow()
 
 const pageErrors = []
@@ -94,7 +125,11 @@ try {
       hasRss: typeof api.fetchRss === 'function',
       hasCustomLive: typeof api.fetchCustomLive === 'function',
       hasClipboard: typeof api.readClipboard === 'function',
+      hasWechat: typeof api.fetchWechatArticle === 'function',
+      hasForward: typeof api.pullIncomingShares === 'function' && typeof api.onIncomingShare === 'function',
+      emptyQueue: await api.pullIncomingShares?.().catch(() => null),
       clipboard: await api.readClipboard?.(),
+      notWechat: await api.fetchWechatArticle?.('https://example.com/not-wechat').catch(error => ({ ok: false, message: String(error) })),
       bad: await probe('file:///c:/windows/win.ini'),
       offline: await probe('http://127.0.0.1:9/probe.xml'),
     }
@@ -104,6 +139,16 @@ try {
     'preload 暴露自定义官网与剪贴板通道',
     bridge.hasCustomLive && bridge.hasClipboard && typeof bridge.clipboard?.ok === 'boolean',
     JSON.stringify(bridge.clipboard)
+  )
+  check(
+    '公众号链路只接受 mp.weixin.qq.com 链接',
+    bridge.hasWechat && bridge.notWechat?.ok === false && !/未打包/.test(bridge.notWechat?.message || ''),
+    bridge.notWechat?.message
+  )
+  check(
+    '外部转发通道可用（队列可拉取）',
+    bridge.hasForward && Array.isArray(bridge.emptyQueue),
+    JSON.stringify(bridge.emptyQueue)
   )
   check(
     'RSS 抓取拒绝非 http(s) 地址',
@@ -123,6 +168,24 @@ try {
   await digest.waitFor({ state: 'hidden', timeout: 10000 })
   check('首屏摘要弹框可打开并关闭', true)
   await page.screenshot({ path: path.join(shotDir, 'desktop-01-home.png') })
+
+  // 2.6 外部转发：启动参数带内容时，应用应自动切到「消息与订阅」并打开批量导入
+  const forwardedDialog = page.getByRole('dialog', { name: '批量导入消息' })
+  await forwardedDialog.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {})
+  check('外部转发内容自动进入批量导入', await forwardedDialog.isVisible())
+  if (await forwardedDialog.isVisible()) {
+    await forwardedDialog.locator('.batch-preview-head').waitFor({ timeout: 5000 }).catch(() => {})
+    check(
+      '转发内容被拆成可保存的条目',
+      /2 条/.test(await forwardedDialog.locator('.batch-preview-head').innerText().catch(() => '')),
+      await forwardedDialog.locator('.batch-preview-head').innerText().catch(() => '')
+    )
+    const firstRow = await forwardedDialog.locator('.batch-row').first().innerText().catch(() => '')
+    check('转发文件里的来源名被识别', firstRow.includes('ACM 集训队通知群'), firstRow.replace(/\s+/g, ' '))
+    await forwardedDialog.getByRole('button', { name: '取消' }).click()
+    await forwardedDialog.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {})
+  }
+
 
   // 4. 走遍全部导航页面
   for (const [index, label] of NAV.entries()) {
@@ -144,6 +207,7 @@ try {
   check('无运行时错误', pageErrors.length === 0, pageErrors.join(' | '))
 } finally {
   await app.close()
+  try { fs.unlinkSync(tempShare) } catch { /* 临时文件删不掉不影响结论 */ }
 }
 
 if (failures.length > 0) {
