@@ -26,9 +26,25 @@ export interface LiveSource {
   linkPattern: RegExp
   /** 最多采几条，控制对官网的请求量。 */
   limit: number
+  /** 详情页完整标题优先取这里的 meta（列表页标题常被截断）。 */
+  titleMeta?: string
+  /** 详情页正文摘要优先取这里的 meta。 */
+  summaryMeta?: string
 }
 
 export const LIVE_SOURCES: LiveSource[] = [
+  {
+    // P1：先服务温州医科大学的学生。首页列表即教务通知流（info/1034 学业管理、info/1035 教学建设）。
+    id: 'wmu',
+    name: '温州医科大学教务处',
+    homepage: 'https://jwc.wmu.edu.cn/',
+    listUrl: 'https://jwc.wmu.edu.cn/',
+    origin: 'https://jwc.wmu.edu.cn',
+    linkPattern: /^info\/(?:1034|1035)\/\d+\.htm/,
+    limit: 8,
+    titleMeta: 'pageTitle',
+    summaryMeta: 'description',
+  },
   {
     id: 'mcm',
     name: '全国大学生数学建模竞赛官网',
@@ -108,24 +124,42 @@ function stripTags(html: string): string {
     .trim()
 }
 
-/** 从列表页 HTML 里抽「链接 + 标题」，按 linkPattern 过滤、去重、保序。 */
-export function extractListLinks(html: string, source: LiveSource): { url: string; title: string }[] {
-  const results: { url: string; title: string }[] = []
+/** 从列表页 HTML 里抽「链接 + 标题 + 列表日期」，按 linkPattern 过滤、去重、保序。
+ * 温医大等门户的条目是 <li><a href>标题</a><span>2026-10-28</span></li>，列表日期比详情页更可靠。 */
+export function extractListLinks(html: string, source: LiveSource): { url: string; title: string; listDate: string | null }[] {
+  const results: { url: string; title: string; listDate: string | null }[] = []
   const seen = new Set<string>()
-  const anchor = /<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]{0,200}?)<\/a>/gi
+  const anchor = /<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]{0,200}?)<\/a>((?:(?!<a\b)[\s\S]){0,200})/gi
   let match: RegExpExecArray | null
   while ((match = anchor.exec(html)) && results.length < source.limit * 3) {
     const href = match[1]
     if (!source.linkPattern.test(href)) continue
     const title = stripTags(match[2])
     if (title.length < 8) continue
-    const url = href.startsWith('http') ? href : `${source.origin}${href}`
+    // 同一块里的日期：<span>2026-10-28</span> 或 <p>11/02 </p><span>2026</span>
+    const tail = match[3] ?? ''
+    let listDate: string | null = null
+    const iso = tail.match(/(\d{4}-\d{1,2}-\d{1,2})/)
+    const slash = tail.match(/(\d{1,2})\/(\d{1,2})\s*<\/p>\s*<span>\s*(\d{4})/)
+    if (iso) listDate = iso[1]
+    else if (slash) listDate = `${slash[3]}-${slash[1]}-${slash[2]}`
+    const url = href.startsWith('http')
+      ? href
+      : `${source.origin.replace(/\/$/, '')}/${href.replace(/^\//, '')}`
     if (seen.has(url)) continue
     seen.add(url)
-    results.push({ url, title })
+    results.push({ url, title, listDate })
     if (results.length >= source.limit) break
   }
   return results
+}
+
+/** 详情页 meta 里的干净字段（温医大：pageTitle / description）。 */
+function extractMeta(html: string, name: string): string | null {
+  const pattern = new RegExp(`<meta[^>]+name=["']${name}["'][^>]+content=["']([^"']{4,400})["']`, 'i')
+  const match = html.match(pattern)
+    ?? html.match(new RegExp(`<meta[^>]+content=["']([^"']{4,400})["'][^>]+name=["']${name}["']`, 'i'))
+  return match ? decodeEntities(match[1]).trim() : null
 }
 
 /** 详情页正文里的发布日期：mcm 是「2026-03-24 02:42」，挑战杯是「2026/05/28」。 */
@@ -143,8 +177,8 @@ function extractPublishedAt(html: string): string | null {
 }
 
 /** 从正文里找与「报名/截止/提交」相邻的日期句，作为截止时间候选。
- * 「X月X日以前/之前」是资格界限不是截止时间，明确跳过。 */
-function extractDeadline(text: string): { raw: string; sentence: string } | null {
+ * 「X月X日以前/之前」是资格界限不是截止时间；日期等于发布日期的也不算（那多半是行文里的自指）。 */
+function extractDeadline(text: string, publishedIso?: string | null): { raw: string; sentence: string } | null {
   const keywords = /截止|报名|提交|申报|答辩|预报名/
   const dateLike = /\d{1,2}\s*月\s*\d{1,2}\s*日|\d{4}-\d{1,2}-\d{1,2}|\d{4}\/\d{1,2}\/\d{1,2}/
   const sentences = text.split(/(?<=[。；;！!？?\n])/)
@@ -155,29 +189,50 @@ function extractDeadline(text: string): { raw: string; sentence: string } | null
     const start = match.index
     const after = sentence.slice(start + match[0].length, start + match[0].length + 6)
     if (/^\s*(以|之)?[前早]/.test(after)) continue
+    if (publishedIso && normalizeDate(match[0]) === normalizeDate(publishedIso)) continue
     return { raw: match[0], sentence: sentence.trim().slice(0, 160) }
   }
   return null
 }
 
-/** 把一条真实公告整理成引擎能吃的新条目；evidence 保留官网原句。 */
-export function buildLiveItem(source: LiveSource, url: string, title: string, html: string): NewItemInput {
+/** 把「2026-10-16」「2026/10/16」「10月16日」统一成可比较的月-日数字串。 */
+function normalizeDate(raw: string): string {
+  const numbers = raw.match(/\d+/g) ?? []
+  return numbers.slice(-3).map(n => String(Number(n))).join('-')
+}
+
+/** 把一条真实公告整理成引擎能吃的新条目；evidence 保留官网原句。
+ * listDate 是列表页自带的发布日期（温医大等门户），比详情页里的日期更可靠。 */
+export function buildLiveItem(
+  source: LiveSource,
+  url: string,
+  listTitle: string,
+  html: string,
+  listDate?: string | null,
+): NewItemInput {
+  // 详情页 meta 里通常有完整标题（列表页标题常被截断成「…」）
+  const metaTitle = source.titleMeta ? extractMeta(html, source.titleMeta) : null
+  const title = metaTitle && metaTitle.length >= listTitle.length ? metaTitle : listTitle
+  const metaSummary = source.summaryMeta ? extractMeta(html, source.summaryMeta) : null
+
   const fullText = stripTags(html)
   // 正文起点：跳过页头导航（首页/登录/主办单位…），从标题首次出现之后算起
   const titlePos = fullText.indexOf(title)
   const bodyText = titlePos >= 0 ? fullText.slice(titlePos + title.length).trim() : fullText
-  const publishedIso = extractPublishedAt(html)
+  const publishedIso = listDate ?? extractPublishedAt(html)
   const publishedTs = parseDateText(publishedIso ?? undefined)
-  const deadlineHit = extractDeadline(bodyText)
+  const deadlineHit = extractDeadline(bodyText, publishedIso)
   const deadlineTs = deadlineHit ? parseDateText(deadlineHit.raw) : null
   const guess = inferCategory(`${title} ${bodyText.slice(0, 200)}`)
 
-  // 摘要：优先取正文第一句有信息量的话（跳过「见附件」「点击」这类）
+  // 摘要：优先 meta description，其次正文第一句有信息量的话（跳过「见附件」「点击」这类）
   const filler = /^(见附件|附件|点击|请|各|为|根据|关于|作者|时间|位置)/
-  const summaryCandidate = bodyText
-    .split(/(?<=[。！?；;])\s*/)
-    .map(sentence => sentence.trim())
-    .find(sentence => sentence.length >= 16 && sentence.length <= 120 && !filler.test(sentence) && !/前一篇|相关文章|首页/.test(sentence))
+  const summaryCandidate =
+    (metaSummary && metaSummary.length >= 16 ? metaSummary.slice(0, 140) : null) ??
+    bodyText
+      .split(/(?<=[。！?；;])\s*/)
+      .map(sentence => sentence.trim())
+      .find(sentence => sentence.length >= 16 && sentence.length <= 120 && !filler.test(sentence) && !/前一篇|相关文章|首页/.test(sentence))
 
   return {
     title,
@@ -191,7 +246,7 @@ export function buildLiveItem(source: LiveSource, url: string, title: string, ht
     deadlineTs: deadlineTs ? new Date(deadlineTs).toISOString() : undefined,
     officialUrl: url,
     officialHome: source.homepage,
-    evidence: deadlineHit ? deadlineHit.sentence : bodyText.slice(0, 140),
+    evidence: deadlineHit ? deadlineHit.sentence : (metaSummary && metaSummary.length >= 20 ? metaSummary.slice(0, 140) : bodyText.slice(0, 140)),
     keyPoints: deadlineHit ? [`截止时间候选：${deadlineHit.raw}（请以官网原文为准）`] : [],
     tags: guess.matched.slice(0, 3),
     liveSourceId: source.id,
@@ -209,7 +264,7 @@ export async function collectSource(source: LiveSource): Promise<{ items: NewIte
   for (const link of links) {
     try {
       const html = await fetchText(link.url)
-      items.push(buildLiveItem(source, link.url, link.title, html))
+      items.push(buildLiveItem(source, link.url, link.title, html, link.listDate))
     } catch (error) {
       failures.push(`${link.title.slice(0, 20)}: ${error instanceof Error ? error.message : '未知错误'}`)
     }

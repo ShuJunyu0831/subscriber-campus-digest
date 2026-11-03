@@ -152,9 +152,11 @@ test('同一事件的多版本自动归并且只保留最新结论', async ({ pa
   const mergeChip = page.locator('.insight-chip').first()
   await expect(mergeChip).toContainText(/已自动合并 [2-9] 条/)
   await expect(mergeChip).toContainText('组版本')
-  // 官网直采快照条目已并入信息库，工具条有真实抓取标注
-  await expect(page.locator('.live-chip')).toContainText('官网直采 10 条')
+  // 官网直采快照条目已并入信息库，工具条有真实抓取标注（快照数量随官网更新变化，只断言来源构成）
+  await expect(page.locator('.live-chip')).toContainText(/官网直采 \d+ 条/)
   await expect(page.locator('.library-list .source-type').filter({ hasText: '官网直采' }).first()).toBeVisible()
+  // P1：温州医科大学教务处的真实教务通知在信息库中可见
+  await expect(page.locator('.library-list .source-name').filter({ hasText: '温州医科大学教务处' }).first()).toBeVisible()
   // 演示事件的原文与转载只出现一次（用唯一的事件词校验，避免与官网直采条目撞标题）
   await expect(page.locator('.library-list .card-main h3').filter({ hasText: '校内选拔报名' })).toHaveCount(1)
 
