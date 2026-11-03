@@ -77,6 +77,37 @@ try {
   check('逐字标题已渲染', shell.splitChars > 0, `${shell.splitChars} 个字符`)
   check('ASCII 背景画布存在', shell.hasCanvas)
 
+  // 2.5 主进程 IPC：实时抓取 / RSS 抓取。
+  // collector.cjs 曾经漏打进 asar（源码运行正常、打包版一律报「未打包」），
+  // 这里用一个必然连不上的本地端口做探针：能走到网络层就说明解析器确实打进包了。
+  const bridge = await page.evaluate(async () => {
+    const api = window.subscriberDesktop || {}
+    const probe = async url => {
+      try {
+        return await api.fetchRss(url)
+      } catch (error) {
+        return { ok: false, message: String(error && error.message ? error.message : error) }
+      }
+    }
+    return {
+      hasLive: typeof api.fetchLive === 'function',
+      hasRss: typeof api.fetchRss === 'function',
+      bad: await probe('file:///c:/windows/win.ini'),
+      offline: await probe('http://127.0.0.1:9/probe.xml'),
+    }
+  })
+  check('preload 暴露实时抓取与 RSS 抓取', bridge.hasLive && bridge.hasRss)
+  check(
+    'RSS 抓取拒绝非 http(s) 地址',
+    bridge.bad?.ok === false && /http/.test(bridge.bad.message || ''),
+    bridge.bad?.message
+  )
+  check(
+    'RSS 解析器已打包（请求走到网络层）',
+    bridge.offline?.ok === false && !/未打包/.test(bridge.offline.message || ''),
+    bridge.offline?.message
+  )
+
   // 3. 首屏摘要弹框
   const digest = page.getByRole('dialog', { name: '今天，值得关注这些' })
   await digest.waitFor({ state: 'visible', timeout: 15000 })

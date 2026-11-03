@@ -57,13 +57,32 @@ async function main() {
     try {
       fs.rmSync(stalePath, { recursive: true, force: true })
     } catch (error) {
-      fail(`无法清理 ${stalePath}：${error.message}`)
+      // 本机 safe-delete 钩子偶尔会让目录删除失败（trash-failed），
+      // 删不掉就改名挪开，效果等价且不会中断打包。
+      const parked = `${stalePath}.stale-${Date.now()}`
+      try {
+        fs.renameSync(stalePath, parked)
+        log(`无法删除 ${stale}，已改名挪开：${path.basename(parked)}`)
+      } catch (renameError) {
+        fail(`无法清理 ${stalePath}：${error.message} / ${renameError.message}`)
+      }
     }
   }
   fs.mkdirSync(path.join(stageDir, 'electron'), { recursive: true })
   fs.cpSync(path.join(root, 'dist'), path.join(stageDir, 'dist'), { recursive: true, force: true })
   for (const file of ['main.cjs', 'preload.cjs']) {
     fs.copyFileSync(path.join(root, 'electron', file), path.join(stageDir, 'electron', file))
+  }
+  // electron/live/collector.cjs 由 npm run collect 生成（esbuild 打包 src/liveSource.ts + src/rss.ts）。
+  // 主进程的 live:fetch / rss:fetch 都依赖它；漏拷的后果是打包版一律报「采集器未打包」，
+  // 而源码运行时又完全正常，很容易漏测，所以这里必须存在性判断 + 明确日志。
+  const collectorFile = path.join(root, 'electron', 'live', 'collector.cjs')
+  if (fs.existsSync(collectorFile)) {
+    fs.mkdirSync(path.join(stageDir, 'electron', 'live'), { recursive: true })
+    fs.copyFileSync(collectorFile, path.join(stageDir, 'electron', 'live', 'collector.cjs'))
+    log('打包采集器 live/collector.cjs')
+  } else {
+    log('未找到 electron/live/collector.cjs，打包版将没有实时抓取（先跑 npm run collect）')
   }
 
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
