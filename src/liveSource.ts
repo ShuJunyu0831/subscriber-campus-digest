@@ -340,3 +340,116 @@ export async function fetchLiveCompetitions(): Promise<LiveFetchReport> {
   }
   return { fetchedAt: new Date().toISOString(), items, logs }
 }
+
+/* ------------------------------------------------------------------ *
+ * 用户自选竞赛官网（通用识别）
+ *
+ * 内置源能写得精确，是因为逐个看过页面结构。用户随手贴一个官网地址时
+ * 我们不可能为每个站点写规则，只能退一步做「启发式识别」：
+ * 同域 + 带数字 id 的链接 + 标题不像导航词 → 当成公告候选。
+ *
+ * 诚实边界：识别不出来就说识别不出来，并建议改用 RSS，
+ * 绝不拿首页导航当公告塞进信息库。
+ * ------------------------------------------------------------------ */
+
+const NAV_TITLES = /^(首页|主页|登录|注册|联系我们|关于我们|更多|查看更多|返回|上一页|下一页|下载|下载中心|网站地图|English|English Version|旧版入口|友情链接|设为首页|加入收藏)$/
+
+/** 从任意列表页里挑出「像公告详情」的链接。 */
+export function extractGenericLinks(
+  html: string,
+  listUrl: string,
+  limit = 5,
+): { url: string; title: string; listDate: string | null }[] {
+  const base = new URL(listUrl)
+  const results: { url: string; title: string; listDate: string | null }[] = []
+  const seen = new Set<string>()
+  const anchor = /<a\b[^>]*href="([^"]+)"[^>]*>([\s\S]{0,240}?)<\/a>((?:(?!<a\b)[\s\S]){0,160})/gi
+  let match: RegExpExecArray | null
+
+  while ((match = anchor.exec(html)) && results.length < limit) {
+    const href = match[1].trim()
+    if (!href || /^(javascript:|#|mailto:|tel:)/i.test(href)) continue
+
+    let url: URL
+    try {
+      url = new URL(href, listUrl)
+    } catch {
+      continue
+    }
+    if (url.origin !== base.origin) continue
+    if (url.href.split('#')[0] === base.href.split('#')[0]) continue
+
+    const title = stripTags(match[2])
+    if (title.length < 10 || NAV_TITLES.test(title)) continue
+    // 详情页一般带数字编号；纯栏目页（/news/）没有，正好挡掉
+    if (!/\d{2,}/.test(url.pathname + url.search)) continue
+    if (seen.has(url.href)) continue
+    seen.add(url.href)
+
+    const tail = match[3] ?? ''
+    const iso = tail.match(/(\d{4}-\d{1,2}-\d{1,2})/)
+    const slash = tail.match(/(\d{1,2})\/(\d{1,2})\s*<\/p>\s*<span>\s*(\d{4})/)
+    let listDate: string | null = null
+    if (iso) listDate = iso[1]
+    else if (slash) listDate = `${slash[3]}-${slash[1]}-${slash[2]}`
+
+    results.push({ url: url.href, title, listDate })
+  }
+  return results
+}
+
+export function makeCustomSource(name: string, listUrl: string): LiveSource {
+  const base = new URL(listUrl)
+  return {
+    id: `custom:${base.host}`,
+    name,
+    homepage: base.origin,
+    listUrl,
+    origin: base.origin,
+    // 通用识别走 extractGenericLinks，这里的 pattern 只用于类型完整性
+    linkPattern: /./,
+    limit: 5,
+  }
+}
+
+export interface CustomSourceResult {
+  ok: boolean
+  message: string
+  items: NewItemInput[]
+}
+
+/** 抓一个用户自己添加的官网：列表页 → 前几条详情页。 */
+export async function fetchCustomSource(name: string, listUrl: string): Promise<CustomSourceResult> {
+  const source = makeCustomSource(name || '自定义官网', listUrl)
+  const listHtml = await fetchText(listUrl)
+  const links = extractGenericLinks(listHtml, listUrl, source.limit)
+  if (links.length === 0) {
+    return {
+      ok: false,
+      message: '没有识别出公告列表：这家站点可能是前端渲染，或列表结构比较特殊，建议改用 RSS 地址',
+      items: [],
+    }
+  }
+
+  const items: NewItemInput[] = []
+  const titles = new Set<string>()
+  const failures: string[] = []
+  for (const link of links) {
+    try {
+      const html = await fetchText(link.url)
+      const item = buildLiveItem(source, link.url, link.title, html, link.listDate)
+      if (titles.has(item.title)) continue
+      titles.add(item.title)
+      items.push(item)
+    } catch (error) {
+      failures.push(`${link.title.slice(0, 16)}: ${error instanceof Error ? error.message : '未知错误'}`)
+    }
+  }
+  return {
+    ok: items.length > 0,
+    message: items.length > 0
+      ? `抓取 ${items.length} 条${failures.length ? `，${failures.length} 条失败` : ''}`
+      : `识别到 ${links.length} 个链接但都抓取失败（${failures[0] ?? '未知原因'}）`,
+    items,
+  }
+}

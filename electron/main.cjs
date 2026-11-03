@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell, ipcMain } = require('electron')
+const { app, BrowserWindow, Menu, shell, ipcMain, clipboard } = require('electron')
 const path = require('node:path')
 
 const DEV_URL = 'http://127.0.0.1:5173'
@@ -59,6 +59,40 @@ ipcMain.handle('rss:fetch', async (_event, url) => {
     }
   } catch (error) {
     return { ok: false, message: error && error.message ? error.message : '抓取失败', parsed: null }
+  }
+})
+
+/**
+ * 用户自己添加的竞赛官网：抓列表页 → 通用识别公告链接 → 抓前几条详情。
+ * 识别规则与内置源共用（src/liveSource.ts），只是 linkPattern 换成了通用启发式。
+ */
+ipcMain.handle('live:fetch-custom', async (_event, payload) => {
+  const name = typeof payload?.name === 'string' ? payload.name.trim() : ''
+  const listUrl = typeof payload?.listUrl === 'string' ? payload.listUrl.trim() : ''
+  if (!/^https?:\/\//i.test(listUrl)) {
+    return { ok: false, message: '请填写以 http:// 或 https:// 开头的官网地址', items: [] }
+  }
+  const collector = loadLiveCollector()
+  if (!collector || typeof collector.fetchCustomSource !== 'function') {
+    return { ok: false, message: '官网采集器未打包（需先运行 npm run collect）', items: [] }
+  }
+  try {
+    return await collector.fetchCustomSource(name || '自定义官网', listUrl)
+  } catch (error) {
+    return { ok: false, message: `抓取失败：${error && error.message ? error.message : '未知错误'}`, items: [] }
+  }
+})
+
+/**
+ * 读取剪贴板：只在用户点击时读一次，不注册监听、不轮询。
+ * 批量转发消息的路径是「复制 → 点一下导入」，而不是让应用盯着剪贴板。
+ */
+ipcMain.handle('clipboard:read', () => {
+  try {
+    const text = clipboard.readText()
+    return { ok: Boolean(text && text.trim()), text: text ?? '', message: text && text.trim() ? '' : '剪贴板里没有文字' }
+  } catch (error) {
+    return { ok: false, text: '', message: error && error.message ? error.message : '无法读取剪贴板' }
   }
 })
 

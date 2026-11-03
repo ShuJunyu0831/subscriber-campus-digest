@@ -25,6 +25,14 @@ declare global {
           items: import('./rss').FeedItem[]
         } | null
       }>
+      /** 桌面版可用：主进程抓取用户添加的竞赛官网列表页，返回 { ok, message, items }。 */
+      fetchCustomLive?: (name: string, listUrl: string) => Promise<{
+        ok: boolean
+        message: string
+        items: import('./data').NewItemInput[]
+      }>
+      /** 桌面版可用：读取一次系统剪贴板（用户点击才读，不监听变化）。 */
+      readClipboard?: () => Promise<{ ok: boolean; text: string; message: string }>
     }
   }
 }

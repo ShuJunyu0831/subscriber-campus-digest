@@ -50,11 +50,12 @@ import TaxonomyModal from './TaxonomyModal'
 import { DEFAULT_MODEL_ID, resolveModel } from './llmModels'
 import { readCredentials, summarizeWithLlm } from './llmClient'
 import { readPreference, writePreference } from './localStore'
+import { enabledLiveSourceIds, readFollows, saveFollows, type FollowedSource } from './follows'
 
 const navItems: { id: View; label: string; icon: typeof Inbox }[] = [
   { id: 'today', label: '今日精选', icon: Inbox },
   { id: 'library', label: '全部信息', icon: Library },
-  { id: 'wechat', label: '微信消息', icon: MessagesSquare },
+  { id: 'wechat', label: '消息与订阅', icon: MessagesSquare },
   { id: 'favorites', label: '我的收藏', icon: Bookmark },
   { id: 'review', label: '完成回顾', icon: CheckCircle2 },
 ]
@@ -617,12 +618,23 @@ export default function App() {
   const [reviewPeriod, setReviewPeriod] = useState<ReviewPeriod>('all')
   const [toast, setToast] = useState('')
   const [modelId, setModelId] = useState(() => readPreference<string>(MODEL_KEY, DEFAULT_MODEL_ID))
+  const [follows, setFollows] = useState<FollowedSource[]>(() => readFollows())
   const [isMobileViewport, setIsMobileViewport] = useState(() => window.innerWidth < 560)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const model = resolveModel(modelId)
 
   const library = useMemo(() => classifyLibrary(items), [items])
-  const visibleItems = useMemo(() => library.visible.map(entry => entry.item), [library])
+  /**
+   * 用户取消关注的官网源，其条目不再出现在信息库与摘要里（数据仍保留，重新关注就回来）。
+   * 没有 liveSourceId 的条目（手动导入、公众号、演示数据）不受影响。
+   */
+  const followedLiveIds = useMemo(() => enabledLiveSourceIds(follows), [follows])
+  const visibleItems = useMemo(
+    () => library.visible
+      .map(entry => entry.item)
+      .filter(item => !item.liveSourceId || followedLiveIds.has(item.liveSourceId)),
+    [library, followedLiveIds],
+  )
   const selectedEntry = selectedId ? library.byId.get(selectedId) ?? null : null
   const compareEntry = compareId ? library.byId.get(compareId) ?? null : null
 
@@ -677,6 +689,7 @@ export default function App() {
   }, [])
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current) }, [])
   useEffect(() => { writePreference(MODEL_KEY, modelId) }, [modelId])
+  useEffect(() => { saveFollows(follows) }, [follows])
   useEffect(() => {
     const shareState = new URLSearchParams(window.location.search).get('share')
     if (!shareState) return
@@ -820,7 +833,7 @@ export default function App() {
 
   const navigate = (next: View) => { setView(next); setSearch(''); setFilter('全部'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
   const openItem = (item: InfoItem) => setSelectedId(item.id)
-  const pageTitle = { today: '今日精选', library: '全部信息', wechat: '微信消息', favorites: '我的收藏', review: '完成回顾' }[view]
+  const pageTitle = { today: '今日精选', library: '全部信息', wechat: '消息与订阅', favorites: '我的收藏', review: '完成回顾' }[view]
   const subscribedKeys = visibleItems.map(item => subscriptionKey(item.title))
 
   return (
@@ -906,7 +919,7 @@ export default function App() {
             </div>
           </>}
 
-          {view === 'wechat' && <WechatInbox addItem={addItem} notify={notify} modelName={model.name} library={library} onImportArticle={importArticle} />}
+          {view === 'wechat' && <WechatInbox addItem={addItem} notify={notify} modelName={model.name} library={library} onImportArticle={importArticle} follows={follows} onFollowsChange={setFollows} />}
 
           {(view === 'library' || view === 'favorites') && <>
             <section className="page-heading library-heading"><div><span className="eyebrow">{view === 'library' ? 'INFORMATION LIBRARY' : 'SAVED FOR LATER'}</span><SplitText tag="h1" text={pageTitle} effect="rise" splitType="chars" delay={58} duration={0.8} staggerFrom="start" trigger="load" textAlign="left" className="split-heading" /><p>{view === 'library' ? '所有导入与发现的信息，已按事件归并、去重并标注版本。' : '把值得关注的内容留给合适的时间。'}</p></div><button className="button primary desktop-page-action" onClick={() => setImportOpen(true)}><Plus size={17} />导入信息</button></section>

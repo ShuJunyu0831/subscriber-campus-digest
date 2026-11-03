@@ -8,5 +8,9 @@ contextBridge.exposeInMainWorld('subscriberDesktop', {
   /** 主进程实时抓取竞赛官网，返回 { ok, message, report }。 */
   fetchLive: () => ipcRenderer.invoke('live:fetch'),
   /** 主进程抓取用户添加的 RSS / Atom 订阅源，返回 { ok, message, parsed }。 */
-  fetchRss: url => ipcRenderer.invoke('rss:fetch', url)
+  fetchRss: url => ipcRenderer.invoke('rss:fetch', url),
+  /** 主进程抓取用户添加的竞赛官网列表页，返回 { ok, message, items }。 */
+  fetchCustomLive: (name, listUrl) => ipcRenderer.invoke('live:fetch-custom', { name, listUrl }),
+  /** 读取一次系统剪贴板文本（用户点击才读，不做监听）。 */
+  readClipboard: () => ipcRenderer.invoke('clipboard:read')
 })

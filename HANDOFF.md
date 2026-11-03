@@ -8,13 +8,15 @@
 ## 一、一句话现状
 
 Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 GitHub 私有仓库，
-`npm test` **18 组 Playwright 全绿**、`npm run build` 通过。
+`npm test` **20 组 Playwright 全绿**、`npm run build` 通过。
 
 本轮（11-03）补齐了四件事：**信息分类/版本/去重引擎、公众号订阅、赛事官网一键入口、右下角模型选择**；
 随后打通了 **P0 真实数据链路**（`npm run collect` 官网直采 + 快照 + 桌面版实时抓取，详见待办区 P0）、
 **P2 模型真实路由**（`src/llmClient.ts` + LlmPicker 凭据区 + 导入真实调用 + Playwright mock 验证，详见待办区 P2）、
 **P4 体验补完**（版本并排对比、收藏页搜索/排序、完成回顾本周本月切换、公众号全文阅读、GitHub Actions CI，详见待办区 P4），
 以及 **P1 真实订阅源**（温医大学生处直采、RSS/Atom 真实订阅、桌面版主进程抓取，详见待办区 P1）。
+最新一轮（同日）按「服务想参加竞赛的学生」的定位加了两个功能：**多渠道批量导入 + 勾选后逐条 AI 分析**
+与 **自选关注竞赛官网 / 微信小程序**（详见待办区 P5），导航里的「微信消息」因此改名为「消息与订阅」。
 现在四个直采源合计 24 条真实条目；仍然没做的是安装包签名与 NSIS 安装包（P3）。
 
 ---
@@ -26,13 +28,13 @@ Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 
 ```bash
 npm install
 npm run dev              # 开发：http://127.0.0.1:5173
-npm test                 # Web 端 18 组 Playwright（约 45 秒）
+npm test                 # Web 端 20 组 Playwright（约 42 秒）
 npm run build            # 类型检查 + 生产构建
 npm run collect          # 真实抓取竞赛官网 → src/live/competitions.json + 桌面版采集器
 
 npm run desktop          # 直接以 Electron 运行
 npm run desktop:portable # 重新打免安装包 → desktop-dist/Subscriber（会先 collect --lenient）
-npm run desktop:verify   # 拉起打包后的 exe 跑 16 项检查（含 IPC 探针）
+npm run desktop:verify   # 拉起打包后的 exe 跑 17 项检查（含 IPC 探针）
 ```
 
 演示时可以按这条路径走一遍（能一次看完四个新功能）：
@@ -50,6 +52,10 @@ npm run desktop:verify   # 拉起打包后的 exe 跑 16 项检查（含 IPC 探
 10. 进「微信消息 → 公众号订阅」→ 点《数据结构》标题 → 「阅读全文」看演示全文。
 11. 左栏「我的 RSS 订阅」→「添加订阅源」→ 填名称与一个真实 RSS/Atom 地址 → 分组里立刻多出一组，
     该组条目阅读弹窗顶部标「RSS 全文 · 真实抓取」；抓失败会直接报错，不会塞演示内容。桌面版这一步不受跨域限制。
+12. 进「消息与订阅 → 消息箱」→ 点「批量导入」→ 渠道选「钉钉」→ 把三段带群名的消息一次粘进去 →
+    下方「拆分结果」自动拆成 3 条 → 「仅保存到本机（3 条）」→ 按渠道筛选 → 「全选当前 3 条」→「用 AI 分析」。
+13. 切到「关注源」：取消勾选某个内置官网，回信息库看它的条目就消失了；勾回来又出现。
+    下面还能添加自定义官网（浏览器版会提示需要桌面版）、登记微信小程序并把卡片导进消息箱。
 
 ---
 
@@ -120,7 +126,7 @@ npm run desktop:verify   # 拉起打包后的 exe 跑 16 项检查（含 IPC 探
 src/
   App.tsx             主界面：顶栏、内容层、5 个页面、摘要弹框、卡片与详情抽屉
   classify.ts         分类引擎（指纹/相似度/聚类/版本/去重/时效/分类打分）
-  liveSource.ts       官网直采核心（LIVE_SOURCES 源定义、列表/详情解析、截止时间候选）
+  liveSource.ts       官网直采核心（LIVE_SOURCES 源定义、列表/详情解析、截止时间候选、自定义官网通用识别）
   liveSnapshot.ts     快照 → InfoItem 转换、抓取时间展示
   live/competitions.json  真实抓取快照（npm run collect 产出，提交入库）
   rss.ts              RSS 2.0 / Atom 解析、订阅增删、条目 → 文章/入库输入（三端复用）
@@ -132,15 +138,18 @@ src/
   llmClient.ts        真实模型调用（localStorage 凭据 + OpenAI 兼容 chat/completions）
   GradientASCII.tsx   全屏 WebGL2 多 Pass ASCII 背景
   SplitText.tsx       逐字动画标题
-  WechatInbox.tsx     微信消息：本机导入 + 公众号订阅标签
-  localStore.ts       IndexedDB 本地存储 + `readPreference/writePreference`
+  WechatInbox.tsx     消息与订阅（本机消息箱、批量导入、逐条 AI 分析、关注源/公众号分区）
+  shareImport.ts      批量粘贴文本拆分（来源名行识别、空行兜底），纯函数、无副作用
+  FollowSources.tsx   关注源：竞赛官网勾选与自定义抓取、小程序登记与卡片导入
+  follows.ts          关注配置读写（localStorage）+ 信息库过滤用的 liveSourceId 集合
+  localStore.ts       IndexedDB 本地存储（消息含 channel / analyzedAt、批量写入）+ `readPreference/writePreference`
   data.ts             演示数据、InfoItem / NewItemInput / AddItemResult 类型
   index.css           全部样式（新功能样式集中在文件末尾）
 scripts/collect.mjs   真实采集脚本（esbuild 打包 liveSource → Node 抓取 → 写快照 + 桌面版采集器）
-electron/             主进程（含 live:fetch / rss:fetch IPC）、打包、图标、验证脚本
+electron/             主进程（IPC：live:fetch / live:fetch-custom / rss:fetch / clipboard:read）、打包、图标、验证脚本
 electron/live/        collector.cjs（npm run collect 生成，已 gitignore）
 .github/workflows/ci.yml  CI：build + Playwright（Node 20 + Chromium）
-tests/prototype.spec.ts   18 组 Playwright 用例
+tests/prototype.spec.ts   20 组 Playwright 用例
 ```
 
 ---
@@ -149,18 +158,19 @@ tests/prototype.spec.ts   18 组 Playwright 用例
 
 产品/隐私侧：
 
-1. **不读取个人微信群。** 只能由用户主动分享或粘贴，先落 IndexedDB，本机预览后再按次确认是否上云。
-2. **不做自动读取无权限的内容。** 公开检索只访问允许使用的公开网页，并保留来源证据。
-3. **完成回顾由用户手动勾选**，系统不自动判定、不虚构成就。
-4. **原始文件默认留在本地**，仅在用户主动解析时按需上传，并有明确删除规则。
-5. **每份摘要只给一份**，不做信息流无限刷新。
-6. 预算目标：每月 200 元以内，需要用户额度与处理频率控制。
-7. 首版文件范围：文字、Word、PDF、图片、普通 PPT。扫描件增强、超大 PPT、视频后置。
-8. **不要说「已接入微信」。** 微信没有面向第三方应用的订阅号读取接口。内置公众号账号仍是演示数据；
+1. **不读取个人微信群、钉钉群。** 只能由用户主动分享、粘贴或点「从剪贴板读取」，先落 IndexedDB，本机预览后再按次确认是否上云。
+2. **剪贴板只读一次，不监听。** `clipboard:read` 是用户点击时的一次性调用；不要改成 `setInterval` 轮询或 `clipboard` 事件监听，那等于偷偷读用户剪贴板。
+3. **不做自动读取无权限的内容。** 公开检索只访问允许使用的公开网页，并保留来源证据。
+4. **完成回顾由用户手动勾选**，系统不自动判定、不虚构成就。
+5. **原始文件默认留在本地**，仅在用户主动解析时按需上传，并有明确删除规则。
+6. **每份摘要只给一份**，不做信息流无限刷新。
+7. 预算目标：每月 200 元以内，需要用户额度与处理频率控制。
+8. 首版文件范围：文字、Word、PDF、图片、普通 PPT。扫描件增强、超大 PPT、视频后置。
+9. **不要说「已接入微信」。** 微信没有面向第三方应用的订阅号读取接口。内置公众号账号仍是演示数据；
    真实订阅走「用户自己提供、已获授权的 RSS / Atom 地址」这条路（`src/rss.ts`），界面标注「真实抓取」，
    抓不到就报错，不许用演示内容顶替失败结果。
-9. **模型选择器不发请求。** 只是界面标签，任何真实调用都要单独做密钥管理、计费提示与失败兜底。
-10. **官网只放能核实的入口。** 拿不准就留空显示「官网待核对」，不要编造链接。
+10. **模型选择器不发请求。** 只是界面标签，任何真实调用都要单独做密钥管理、计费提示与失败兜底。
+11. **官网只放能核实的入口。** 拿不准就留空显示「官网待核对」，不要编造链接。
 
 技术侧：
 
@@ -179,6 +189,13 @@ tests/prototype.spec.ts   18 组 Playwright 用例
   会把行政通知误判成「新闻」。
 - 公众号/订阅源分组里判断「是否已订阅」用的是 `activeIds = [...subscribed, ...rssAccounts.map(a=>a.id)]`，
   新增来源类型时记得加进去，否则新来源的条目不会显示。
+- **消息渠道只有一处真源**：`CHANNEL_LABELS` / `CHANNELS`（`shareImport.ts`）。加渠道要同时改
+  `LocalWechatMessage.channel` 的类型、`.channel-badge.<channel>` 配色和渠道筛选按钮，否则界面上会没有标识。
+- **关注过滤只碰 `liveSourceId`**：`App.tsx` 的 `visibleItems` 对没有 `liveSourceId` 的条目一律放行。
+  别把过滤挪进 `classifyLibrary`，那样手动导入的条目也会被牵连。
+- `follows` 状态放在 `App.tsx`（不是 `WechatInbox` 内部），因为信息库过滤和关注页要共用同一份数据；
+  组件里别再各自 `readFollows()`，会出现两处状态不同步。
+- 「批量导入」与「批量粘贴导入」两个按钮是**不同文案**，测试用 `exact: true` 区分；改文案前先看 `tests/prototype.spec.ts`。
 
 ---
 
@@ -265,7 +282,33 @@ D. 诚实边界
   无全文的文章明确提示「这篇只有摘要」，不会编造正文。
 - CI：`.github/workflows/ci.yml`（Node 20 + Chromium + `npm run build` + `npm test`，失败上传 test-results）。
 - 测试：P4 完成时 17 组全绿（新增 4 组：版本对比字段变更、收藏搜索/筛选/排序、回顾分期计数、公众号全文）；
-  P1 追加 RSS 订阅 1 组后共 **18 组**。
+  P1 追加 RSS 订阅 1 组后共 18 组，P5 再追加 2 组后共 **20 组**。
+
+**P5 — 服务竞赛参赛者的两个新功能（2026-11-03）**
+
+A. 多渠道批量导入 + 勾选后逐条分析（`src/shareImport.ts`、`WechatInbox.tsx`、`localStore.ts`）
+- 消息多了 `channel: 'wechat' | 'dingtalk' | 'miniprogram'`（老数据没有该字段，一律按微信处理）与 `analyzedAt`。
+- 批量导入：`parseBatchText()` 纯函数拆分——先识别「来源名行」（`【群名】`、`群名：内容`、单独一行以「群/频道/小程序…」结尾），
+  一个来源名都没识别到时退回按空行切；<6 字的碎片丢弃；同名默认名自动补序号。
+  弹窗里能看到拆分结果并逐条删除，保存走 `saveLocalMessages()` 单事务批量写。
+- 单条导入保留原样（按钮「导入单条」），测试依赖的 `dialog` 名称仍是「导入微信分享」。
+- 桌面版新增 `clipboard:read` IPC：点「从剪贴板读取」才读一次，**不注册监听、不轮询**。
+- 分析：勾选 → 确认弹窗（显示渠道构成、隐私清理、模型、将发送文本）→ 逐条处理，一条消息一条信息库条目；
+  有凭据走 `summarizeWithLlm`（`llm` 摘要/要点/截止时间/原文依据），没凭据走本地规则整理并明确标「本地整理」。
+  进度条实时更新，失败条目单独汇总，成功条目打 `analyzedAt` 并取消勾选。
+- 导航「微信消息」改名 **「消息与订阅」**（现在同时收钉钉与小程序），标签页为「消息箱 / 公众号订阅 / 关注源」。
+
+B. 自选关注竞赛官网与小程序（`src/follows.ts`、`FollowSources.tsx`、`liveSource.ts`、`follows` 状态在 `App.tsx`）
+- 关注配置存 localStorage `subscriber-followed-sources`；`readFollows()` 会把新版本新增的内置源补进老配置（默认关注），
+  避免升级后信息库突然少一半。
+- 内置 4 个官网源可勾选；取消关注后 `App.tsx` 用 `enabledLiveSourceIds()` 过滤掉对应 `liveSourceId` 的条目
+  （只影响官网直采条目，手动导入 / 公众号 / 演示数据不受影响），数据本身不删，勾回来就恢复。
+- 自定义官网：`fetchCustomSource()` = `extractGenericLinks()` + 复用 `buildLiveItem()`。
+  通用识别规则：同域 + 链接带两位以上数字 + 标题 ≥10 字 + 不像导航词；识别不到直接说识别不到并建议改用 RSS。
+  桌面版走 `live:fetch-custom` IPC，浏览器版如实提示跨域限制（不假装抓到了）。
+- 微信小程序：只登记关注（名称 + 备注），卡片上「导入卡片」→ 切到消息箱并打开批量导入、渠道预填「小程序」。
+  **不假装能订阅小程序内容**：小程序没有公开读取接口，正文只能靠用户转发。
+- 测试：新增 2 组（批量导入 → 渠道筛选 → 全选 → 逐条分析入库；关注源勾选影响信息库 + 自定义官网跨域提示 + 小程序登记导入）。
 
 ---
 
@@ -293,7 +336,7 @@ D. 诚实边界
 直接粘贴：
 
 > 继续 Subscriber 项目，路径 `D:/workbuddy/2026-10-31-18-32-31`，先读 `HANDOFF.md` 和
-> `.workbuddy/memory/` 下的记录。Web 版与 Windows 桌面版都已完成，`npm test` 18 组全绿，
+> `.workbuddy/memory/` 下的记录。Web 版与 Windows 桌面版都已完成，`npm test` 20 组全绿，
 > 已具备分类/版本/去重引擎、公众号订阅与 RSS 真实订阅、四个官网直采源、赛事官网入口与模型选择。
 > 我想继续做 **（写你这次要做的具体事）**。
 

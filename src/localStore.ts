@@ -1,3 +1,5 @@
+import type { MessageChannel } from './shareImport'
+
 export interface ShareDraft {
   id: string
   title: string
@@ -11,7 +13,12 @@ export interface LocalWechatMessage {
   groupName: string
   content: string
   sharedAt: number
-  source: 'wechat-share' | 'demo'
+  /** 采集方式：分享面板 / 批量粘贴 / 剪贴板 / 演示 */
+  source: 'wechat-share' | 'dingtalk-share' | 'miniprogram-share' | 'batch-paste' | 'clipboard' | 'demo'
+  /** 来源渠道。老数据没有这个字段，一律按微信处理。 */
+  channel?: MessageChannel
+  /** 已被 AI 分析过的时间戳，避免同一条消息被反复上传 */
+  analyzedAt?: number
 }
 
 const SHARE_DB = 'subscriber-share-inbox'
@@ -99,6 +106,50 @@ export async function saveLocalMessage(message: LocalWechatMessage): Promise<voi
     transaction.onerror = () => {
       db.close()
       reject(transaction.error ?? new Error('无法保存本地消息'))
+    }
+  })
+}
+
+/** 批量写入：一次事务保存多条，避免逐条打开数据库（批量导入几十条时差别很明显）。 */
+export async function saveLocalMessages(messages: LocalWechatMessage[]): Promise<void> {
+  if (messages.length === 0) return
+  const db = await openDatabase(MESSAGE_DB, MESSAGE_STORE)
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(MESSAGE_STORE, 'readwrite')
+    const store = transaction.objectStore(MESSAGE_STORE)
+    for (const message of messages) store.put(message)
+    transaction.oncomplete = () => {
+      db.close()
+      resolve()
+    }
+    transaction.onerror = () => {
+      db.close()
+      reject(transaction.error ?? new Error('无法保存本地消息'))
+    }
+  })
+}
+
+/** 批量标记已分析：只改 analyzedAt，不动原文。 */
+export async function markMessagesAnalyzed(ids: string[], analyzedAt = Date.now()): Promise<void> {
+  if (ids.length === 0) return
+  const db = await openDatabase(MESSAGE_DB, MESSAGE_STORE)
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(MESSAGE_STORE, 'readwrite')
+    const store = transaction.objectStore(MESSAGE_STORE)
+    for (const id of ids) {
+      const request = store.get(id)
+      request.onsuccess = () => {
+        const record = request.result as LocalWechatMessage | undefined
+        if (record) store.put({ ...record, analyzedAt })
+      }
+    }
+    transaction.oncomplete = () => {
+      db.close()
+      resolve()
+    }
+    transaction.onerror = () => {
+      db.close()
+      reject(transaction.error ?? new Error('无法更新分析标记'))
     }
   })
 }

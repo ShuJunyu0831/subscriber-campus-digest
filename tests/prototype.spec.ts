@@ -129,8 +129,8 @@ test('公开检索防止重复订阅且重开后保留已订阅状态', async ({
 
 test('微信分享先存本机且每次上云必须再次确认', async ({ page }) => {
   await openHome(page)
-  await page.locator('.main-nav').getByRole('button', { name: /微信消息/ }).click()
-  await expect(page.getByRole('heading', { name: '微信消息', exact: true })).toBeVisible()
+  await page.locator('.main-nav').getByRole('button', { name: /消息与订阅/ }).click()
+  await expect(page.getByRole('heading', { name: '消息与订阅', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '载入演示分享' }).click()
   await expect(page.getByRole('dialog', { name: '导入微信分享' })).toBeVisible()
   await page.getByRole('button', { name: '仅保存到本机' }).click()
@@ -141,7 +141,7 @@ test('微信分享先存本机且每次上云必须再次确认', async ({ page 
     await digest.getByRole('button', { name: '开始浏览' }).click()
     await expect(digest).toBeHidden()
   }
-  await page.locator('.main-nav').getByRole('button', { name: /微信消息/ }).click()
+  await page.locator('.main-nav').getByRole('button', { name: /消息与订阅/ }).click()
   await expect(page.getByText('2026 软件创新竞赛通知群')).toBeVisible()
   await page.getByRole('button', { name: '选择2026 软件创新竞赛通知群' }).click()
   await page.getByRole('button', { name: '用 AI 分析' }).click()
@@ -239,7 +239,7 @@ test('同一事件的多版本自动归并且只保留最新结论', async ({ pa
 
 test('公众号订阅按账号分组、自动去重并可把新版本并入信息库', async ({ page }) => {
   await openHome(page)
-  await page.locator('.main-nav').getByRole('button', { name: /微信消息/ }).click()
+  await page.locator('.main-nav').getByRole('button', { name: /消息与订阅/ }).click()
   await page.getByRole('tab', { name: /公众号订阅/ }).click()
 
   await expect(page.locator('.feed-group')).toHaveCount(3)
@@ -306,7 +306,7 @@ test('右下角可切换国内大模型并记住选择', async ({ page }) => {
   await expect(page.locator('.llm-trigger')).toContainText('Kimi K2')
 
   // 微信分析的确认弹窗引用当前选择的模型
-  await page.locator('.main-nav').getByRole('button', { name: /微信消息/ }).click()
+  await page.locator('.main-nav').getByRole('button', { name: /消息与订阅/ }).click()
   await page.getByRole('button', { name: '载入演示分享' }).click()
   await page.getByRole('button', { name: '仅保存到本机' }).click()
   await page.getByRole('button', { name: '选择2026 软件创新竞赛通知群' }).click()
@@ -319,7 +319,7 @@ test('右下角可切换国内大模型并记住选择', async ({ page }) => {
 test('390px 移动端公众号订阅页无横向溢出', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await openHome(page)
-  await page.locator('.mobile-nav').getByRole('button', { name: /微信消息/ }).click()
+  await page.locator('.mobile-nav').getByRole('button', { name: /消息与订阅/ }).click()
   await page.getByRole('tab', { name: /公众号订阅/ }).click()
   await expect(page.locator('.account-overview')).toBeVisible()
   await expect(page.locator('.feed-article').first()).toBeVisible()
@@ -405,7 +405,7 @@ test('完成回顾可按本周 / 本月 / 全部切换并分组', async ({ page 
 
 test('公众号文章可以打开演示全文阅读', async ({ page }) => {
   await openHome(page)
-  await page.locator('.main-nav').getByRole('button', { name: /微信消息/ }).click()
+  await page.locator('.main-nav').getByRole('button', { name: /消息与订阅/ }).click()
   await page.getByRole('tab', { name: /公众号订阅/ }).click()
 
   const article = page.locator('.feed-article').filter({ hasText: '数据结构' }).first()
@@ -450,7 +450,7 @@ test('可添加真实 RSS 订阅源：抓取、分组、阅读全文并入库', 
   }))
 
   await openHome(page)
-  await page.locator('.main-nav').getByRole('button', { name: /微信消息/ }).click()
+  await page.locator('.main-nav').getByRole('button', { name: /消息与订阅/ }).click()
   await page.getByRole('tab', { name: /公众号订阅/ }).click()
 
   await page.locator('.account-rss').getByRole('button', { name: '添加' }).click()
@@ -480,4 +480,104 @@ test('可添加真实 RSS 订阅源：抓取、分组、阅读全文并入库', 
   await article.getByRole('button', { name: '入库' }).click()
   await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
   await expect(page.locator('.library-list')).toContainText('校园程序设计竞赛')
+})
+
+test('微信与钉钉消息可批量导入本机并逐条分析入库', async ({ page }) => {
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /消息与订阅/ }).click()
+  await page.getByRole('button', { name: '批量导入', exact: true }).click()
+
+  const dialog = page.getByRole('dialog', { name: '批量导入消息' })
+  await expect(dialog).toBeVisible()
+  // 渠道可切换：这次整批都是钉钉
+  await dialog.locator('.channel-picker').getByRole('button', { name: '钉钉' }).click()
+  await dialog.locator('textarea').fill([
+    'ACM 集训队通知群',
+    '校赛报名截止 11 月 18 日，三人一队，线上提交题解。',
+    '',
+    '蓝桥杯备赛群',
+    '省赛 11 月 25 日开始报名，报名费由学院统一承担。',
+    '',
+    '数学建模交流群：国赛校选 11 月 3 日晚截止，请尽快组队。',
+  ].join('\n'))
+
+  // 三条都识别成独立来源，不需要手工拆
+  await expect(dialog.locator('.batch-preview-head')).toContainText('3 条')
+  await expect(dialog.locator('.batch-row')).toHaveCount(3)
+  await dialog.getByRole('button', { name: /仅保存到本机（3 条）/ }).click()
+  await expect(dialog).toBeHidden()
+
+  await expect(page.locator('.local-message')).toHaveCount(3)
+  await expect(page.locator('.channel-badge.dingtalk')).toHaveCount(3)
+
+  // 渠道筛选与全选
+  await page.locator('.channel-filter').getByRole('button', { name: /^钉钉/ }).click()
+  await expect(page.locator('.local-message')).toHaveCount(3)
+  await page.getByRole('button', { name: /全选当前 3 条/ }).click()
+  await expect(page.getByText('已选 3 条消息')).toBeVisible()
+
+  // 勾选后逐条交给模型（无凭据时是本地整理，仍一条一条走完）
+  await page.getByRole('button', { name: '用 AI 分析' }).click()
+  const consent = page.getByRole('dialog', { name: '确认发送给 AI' })
+  await expect(consent).toContainText('3 条钉钉消息')
+  await expect(consent).toContainText('本地整理')
+  await consent.getByRole('checkbox').check()
+  await consent.getByRole('button', { name: '确认并分析' }).click()
+  await expect(consent).toBeHidden()
+
+  await expect(page.locator('.analyzed-label')).toHaveCount(3)
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  await expect(page.locator('.library-list')).toContainText('校赛报名截止')
+  await expect(page.locator('.library-list')).toContainText('省赛 11 月 25 日开始报名')
+})
+
+test('关注源可自选竞赛官网与微信小程序', async ({ page }) => {
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /消息与订阅/ }).click()
+  await page.getByRole('tab', { name: /关注源/ }).click()
+
+  // 内置官网默认全部关注
+  const wmuCheckbox = page.getByRole('checkbox', { name: '取消关注温州医科大学教务处' })
+  await expect(wmuCheckbox).toBeChecked()
+
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  await expect(page.locator('.info-card').filter({ hasText: '温州医科大学教务处' }).first()).toBeVisible()
+
+  // 取消关注 → 该来源的条目从信息库消失（数据还在，重新关注就回来）
+  await page.locator('.main-nav').getByRole('button', { name: /消息与订阅/ }).click()
+  await page.getByRole('tab', { name: /关注源/ }).click()
+  await wmuCheckbox.uncheck()
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  await expect(page.locator('.info-card').filter({ hasText: '温州医科大学教务处' })).toHaveCount(0)
+
+  // 重新关注 → 条目回来
+  await page.locator('.main-nav').getByRole('button', { name: /消息与订阅/ }).click()
+  await page.getByRole('tab', { name: /关注源/ }).click()
+  await page.getByRole('checkbox', { name: '关注温州医科大学教务处' }).check()
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  await expect(page.locator('.info-card').filter({ hasText: '温州医科大学教务处' }).first()).toBeVisible()
+
+  // 自定义官网：浏览器版没有跨域能力，必须如实说明而不是假装抓到了
+  await page.locator('.main-nav').getByRole('button', { name: /消息与订阅/ }).click()
+  await page.getByRole('tab', { name: /关注源/ }).click()
+  await page.getByLabel('官网名称').fill('全国大学生广告艺术大赛')
+  await page.getByLabel('公告列表页地址').fill('https://adc.example.com/news/')
+  await page.getByRole('button', { name: '添加并抓取' }).click()
+  await expect(page.locator('.form-error')).toContainText('浏览器版受跨域限制')
+  await expect(page.locator('.follow-card').filter({ hasText: '全国大学生广告艺术大赛' })).toBeVisible()
+
+  // 小程序：只能登记关注，内容靠转发卡片导入
+  await page.getByRole('button', { name: '关注小程序' }).click()
+  await page.getByLabel('小程序名称').fill('挑战杯赛事助手')
+  await page.getByRole('button', { name: '关注', exact: true }).click()
+  const miniCard = page.locator('.follow-card').filter({ hasText: '挑战杯赛事助手' })
+  await expect(miniCard).toBeVisible()
+  await expect(miniCard.locator('.follow-tag.mini')).toContainText('小程序')
+
+  await miniCard.getByRole('button', { name: '导入卡片' }).click()
+  const batch = page.getByRole('dialog', { name: '批量导入消息' })
+  await expect(batch).toBeVisible()
+  await expect(batch.locator('.channel-picker button.active')).toContainText('小程序')
+  await batch.getByRole('button', { name: '取消' }).click()
+  await expect(batch).toBeHidden()
 })

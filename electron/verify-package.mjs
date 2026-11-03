@@ -19,7 +19,7 @@ const shotDir = path.join(root, 'shots')
 const env = { ...process.env }
 delete env.ELECTRON_RUN_AS_NODE
 
-const NAV = ['今日精选', '全部信息', '微信消息', '我的收藏', '完成回顾']
+const NAV = ['今日精选', '全部信息', '消息与订阅', '我的收藏', '完成回顾']
 const failures = []
 
 function check(label, condition, detail = '') {
@@ -92,11 +92,19 @@ try {
     return {
       hasLive: typeof api.fetchLive === 'function',
       hasRss: typeof api.fetchRss === 'function',
+      hasCustomLive: typeof api.fetchCustomLive === 'function',
+      hasClipboard: typeof api.readClipboard === 'function',
+      clipboard: await api.readClipboard?.(),
       bad: await probe('file:///c:/windows/win.ini'),
       offline: await probe('http://127.0.0.1:9/probe.xml'),
     }
   })
   check('preload 暴露实时抓取与 RSS 抓取', bridge.hasLive && bridge.hasRss)
+  check(
+    'preload 暴露自定义官网与剪贴板通道',
+    bridge.hasCustomLive && bridge.hasClipboard && typeof bridge.clipboard?.ok === 'boolean',
+    JSON.stringify(bridge.clipboard)
+  )
   check(
     'RSS 抓取拒绝非 http(s) 地址',
     bridge.bad?.ok === false && /http/.test(bridge.bad.message || ''),
