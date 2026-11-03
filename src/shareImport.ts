@@ -17,7 +17,7 @@ export const CHANNEL_LABELS: Record<MessageChannel, string> = {
 }
 
 /** 来源名后缀：只在「整行就是一个名字」时才认，避免把正文里的词当群名。 */
-const GROUP_SUFFIX = /(群|群聊|频道|公众号|小程序|团队|部门|班级|学院|学生会|号)$/
+const GROUP_SUFFIX = /(群|群聊|频道|公众号|小程序|团队|部门|班级|学院|学生会|协会|社团|组委会|研会|号)$/
 
 export interface BatchEntry {
   groupName: string
@@ -46,7 +46,7 @@ export function readHeader(line: string): Header | null {
   }
 
   // 群名：内容（同一行内）
-  const inline = text.match(/^([^：:]{1,20}(?:群|群聊|频道|公众号|小程序|团队|部门|班级|学院|学生会|号))[：:]\s*(.+)$/)
+  const inline = text.match(/^([^：:]{1,20}(?:群|群聊|频道|公众号|小程序|团队|部门|班级|学院|学生会|协会|社团|组委会|研会|号))[：:]\s*(.+)$/)
   if (inline) return { name: inline[1].trim(), rest: inline[2].trim() }
 
   // 群名：（换行后才是内容）

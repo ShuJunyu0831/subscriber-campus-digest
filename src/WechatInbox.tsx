@@ -489,7 +489,7 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
         </div>
         <div>
           <strong>③ 拖进来 / 批量粘贴</strong>
-          <span>把转发出来的聊天记录文件（.txt / .html）或选中的文字直接拖到窗口任意位置，出现「松手就导入」提示后松开即可；也可以点“批量导入”粘贴多段文字。</span>
+          <span>把聊天记录文件（.txt / .html）、导出的 .zip 压缩包，或整个文件夹直接拖到窗口任意位置，出现「松手就导入」提示后松开即可；也可以点“批量导入”粘贴多段文字。</span>
         </div>
       </div>
 

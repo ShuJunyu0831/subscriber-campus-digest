@@ -8,7 +8,7 @@
 ## 一、一句话现状
 
 Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 GitHub 私有仓库，
-`npm test` **23 组 Playwright 全绿**、`npm run build` 通过。
+`npm test` **24 组 Playwright 全绿**、`npm run build` 通过。
 
 本轮（11-03）补齐了四件事：**信息分类/版本/去重引擎、公众号订阅、赛事官网一键入口、右下角模型选择**；
 随后打通了 **P0 真实数据链路**（`npm run collect` 官网直采 + 快照 + 桌面版实时抓取，详见待办区 P0）、
@@ -31,13 +31,13 @@ Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 
 ```bash
 npm install
 npm run dev              # 开发：http://127.0.0.1:5173
-npm test                 # Web 端 23 组 Playwright（约 50 秒）
+npm test                 # Web 端 24 组 Playwright（约 50 秒）
 npm run build            # 类型检查 + 生产构建
 npm run collect          # 真实抓取竞赛官网 → src/live/competitions.json + 桌面版采集器
 
 npm run desktop          # 直接以 Electron 运行
 npm run desktop:portable # 重新打免安装包 → desktop-dist/Subscriber（会先 collect --lenient）
-npm run desktop:verify   # 拉起打包后的 exe 跑 22 项检查（含 IPC 探针）
+npm run desktop:verify   # 拉起打包后的 exe 跑 26 项检查（含 IPC 探针）
 ```
 
 演示时可以按这条路径走一遍（能一次看完四个新功能）：
@@ -144,7 +144,9 @@ src/
   SplitText.tsx       逐字动画标题
   WechatInbox.tsx     消息与订阅（本机消息箱、批量导入、逐条 AI 分析、关注源/公众号分区）
   shareImport.ts      批量粘贴文本拆分（来源名行识别、空行兜底），纯函数、无副作用
-  dropImport.ts       拖放读取（同步取 DataTransfer → 异步读文件、.html 剥标签、大小与类型护栏），纯函数
+  dropImport.ts       拖放读取（同步取 DataTransfer → 异步读文件 / 解压 zip / 展开文件夹、大小与类型护栏），纯函数
+  zipImport.ts        最小 ZIP 读取器（EOCD + 中央目录 + DecompressionStream('deflate-raw')），只取文本条目
+  textDecode.ts       文本解码兜底（BOM → UTF-8 严格 → GB18030 → 宽松 UTF-8）
   FollowSources.tsx   关注源：竞赛官网勾选与自定义抓取、小程序登记与卡片导入
   follows.ts          关注配置读写（localStorage）+ 信息库过滤用的 liveSourceId 集合
   localStore.ts       IndexedDB 本地存储（消息含 channel / analyzedAt、批量写入）+ `readPreference/writePreference`
@@ -155,7 +157,7 @@ electron/             主进程（IPC：live:fetch / live:fetch-custom / rss:fet
 electron/share-args.cjs  外部转发参数解析（协议链接 / --share-text / --share-file），纯函数、被验证脚本直接断言
 electron/live/        collector.cjs（npm run collect 生成，已 gitignore）
 .github/workflows/ci.yml  CI：build + Playwright（Node 20 + Chromium）
-tests/prototype.spec.ts   23 组 Playwright 用例
+tests/prototype.spec.ts   24 组 Playwright 用例
 ```
 
 ---
@@ -354,13 +356,29 @@ C. 拖放修复（`src/dropImport.ts` 新建、`App.tsx`、`WechatInbox.tsx`）
   收到内容后走和外部转发完全相同的通道：`setView('wechat')` + `setIncomingShare()` → 消息箱打开批量导入。
 - `WechatInbox` 只接收 `dragActive` 用于高亮，不再自己绑 drop（避免重复处理）。
 
-D. 验证
+D. 压缩包 / 文件夹 / GBK（`src/zipImport.ts`、`src/textDecode.ts` 新建）
+- 用户反馈：拖微信导出的 `聊天记录_20261104_000456.zip` 被拒，提示「不是文本文件」。微信导出本来就有
+  「单文件 .txt」「.html」「.zip 压缩包」「整个文件夹」四种形态，只支持前两种等于让用户先手动解压。
+- `zipImport.ts`：自写最小 ZIP 读取器，不引第三方库。找 EOCD（从尾部最多扫 65557 字节）→ 遍历中央目录 →
+  按本地文件头定位真实数据起点（中央目录里的 offset 指向的是本地头，不是数据）→ method 0 直接取、
+  method 8 用 `DecompressionStream('deflate-raw')` 解。护栏：整包 ≤24 MB、单条目解压 ≤4 MB、总量 ≤12 MB、
+  最多 40 个文本条目；Zip64 / 加密 / 未知压缩方式都明确跳过并说明，不返回半截乱码。
+- 文件夹：`webkitGetAsEntry()` 必须**在事件回调里同步调用**，之后再取就没了。所以 `readDroppedContent()`
+  在同步阶段先把目录句柄收集起来，异步阶段用 `createReader().readEntries()` 递归（深度 ≤3、文件 ≤60，
+  `readEntries` 一次只回一批，要读到空数组为止）。
+- 编码：`textDecode.ts` 先按 UTF-8 严格解（`fatal: true`），失败退 GB18030，再失败退回宽松 UTF-8；顺带处理 UTF-8/UTF-16 BOM。
+  微信的 GBK 导出不再整段乱码。
+- `shareImport.ts` 的来源名后缀补了 `协会|社团|组委会|研会`——社团类群名之前识别不出来，会被并进上一条。
+
+E. 验证
 - `electron/verify-package.mjs` 追加 `parseShareArgs` 纯函数断言、用临时 `.txt` 走 `--share-file` 启动并断言
   「外部转发内容自动进入批量导入」「转发内容被拆成可保存的条目」「转发文件里的来源名被识别」，检查项 16 → **18**。
 - 拖放修复后再加 4 项（先回到「今日精选」再拖，证明窗口任意位置都能接住）：整窗提示出现、自动切页进批量导入、
   拆成可保存条目、松手后提示收起，检查项 18 → **22**。
-- Playwright 新增 2 组（公众号链接订阅识别账号读正文并入库；拖入文件/文字进入批量导入），共 **23 组**
-  （另加一组「拖入非文本文件给出明确提示」，不静默失败）。
+- 压缩包支持再加 4 项（真实 deflate 包走 `tests/fixtures/chat-export.zip`，2 个 UTF-8 txt + 1 个 GBK txt + 1 个 html + 1 个 png）：
+  能解开、拆出 4 条（png 被跳过）、GBK 不出乱码、html 已剥标签，检查项 22 → **26**。
+- Playwright 新增 2 组（公众号链接订阅识别账号读正文并入库；拖入文件/文字进入批量导入），共 **24 组**
+  （另加「拖入非文本文件给出明确提示」与「拖入 .zip 聊天记录也能解开导入」两组）。
 
 ---
 
@@ -396,7 +414,7 @@ D. 验证
 直接粘贴：
 
 > 继续 Subscriber 项目，路径 `D:/workbuddy/2026-10-31-18-32-31`，先读 `HANDOFF.md` 和
-> `.workbuddy/memory/` 下的记录。Web 版与 Windows 桌面版都已完成，`npm test` 23 组全绿，
+> `.workbuddy/memory/` 下的记录。Web 版与 Windows 桌面版都已完成，`npm test` 24 组全绿，
 > 已具备分类/版本/去重引擎、公众号订阅与 RSS 真实订阅、四个官网直采源、赛事官网入口与模型选择。
 > 我想继续做 **（写你这次要做的具体事）**。
 

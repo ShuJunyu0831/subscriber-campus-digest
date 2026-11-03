@@ -218,6 +218,30 @@ try {
   }
   check('松手后整窗提示已收起', await dropOverlay.isHidden().catch(() => true))
 
+  // 2.8 拖入 .zip 聊天记录：验证打包环境里 DecompressionStream('deflate-raw') 可用
+  const fixturePath = path.join(root, 'tests', 'fixtures', 'chat-export.zip')
+  if (fs.existsSync(fixturePath)) {
+    const zipBase64 = fs.readFileSync(fixturePath).toString('base64')
+    await page.evaluate((payload) => {
+      const bytes = Uint8Array.from(atob(payload), char => char.charCodeAt(0))
+      const data = new DataTransfer()
+      data.items.add(new File([bytes], '聊天记录_20261104_000456.zip', { type: 'application/zip' }))
+      document.body.dispatchEvent(new DragEvent('drop', { dataTransfer: data, bubbles: true, cancelable: true }))
+    }, zipBase64)
+    const zipDialog = page.getByRole('dialog', { name: '批量导入消息' })
+    await zipDialog.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {})
+    check('拖入的 .zip 聊天记录能解开', await zipDialog.isVisible())
+    if (await zipDialog.isVisible()) {
+      const zipHead = await zipDialog.locator('.batch-preview-head').innerText().catch(() => '')
+      check('压缩包里的文本条目都被拆出来（4 条，png 跳过）', /4 条/.test(zipHead), zipHead)
+      const zipBody = await zipDialog.innerText().catch(() => '')
+      check('压缩包内 GBK 条目没有变成乱码', zipBody.includes('电子设计竞赛群'))
+      check('压缩包内 .html 条目已剥掉标签', !zipBody.includes('<p>'))
+      await zipDialog.getByRole('button', { name: '取消' }).click()
+      await zipDialog.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {})
+    }
+  }
+
 
   // 4. 走遍全部导航页面
   for (const [index, label] of NAV.entries()) {

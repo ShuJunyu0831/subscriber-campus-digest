@@ -1089,7 +1089,7 @@ export default function App() {
         <div className="drop-overlay-card">
           <Upload size={30} />
           <strong>松手就导入消息箱</strong>
-          <span>聊天记录 .txt / .md / .html，或直接拖选中的文字</span>
+          <span>聊天记录 .txt / .md / .html、导出的 .zip 压缩包、或整个文件夹</span>
         </div>
       </div>}
     </div>

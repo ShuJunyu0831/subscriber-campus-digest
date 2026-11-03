@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
 
 /** 打开首页并关闭首屏今日摘要弹框，避免遮住后续操作。 */
@@ -688,4 +689,31 @@ test('拖入非文本文件时给出明确提示，不会静默失败', async ({
   await expect(page.locator('.toast')).toContainText('没有读到可导入的文字')
   await expect(page.locator('.toast')).toContainText('photo.png')
   await expect(page.getByRole('dialog', { name: '批量导入消息' })).toBeHidden()
+})
+
+test('拖入微信导出的 .zip 聊天记录也能解开导入', async ({ page }) => {
+  await openHome(page)
+  // 真实 deflate 压缩包（含两个 txt、一个 html、一张会被跳过的 png）
+  const base64 = readFileSync('tests/fixtures/chat-export.zip').toString('base64')
+  await page.evaluate((payload: string) => {
+    const bytes = Uint8Array.from(atob(payload), char => char.charCodeAt(0))
+    const data = new DataTransfer()
+    data.items.add(new File([bytes], '聊天记录_20261104_000456.zip', { type: 'application/zip' }))
+    document.body.dispatchEvent(new DragEvent('drop', { dataTransfer: data, bubbles: true, cancelable: true }))
+  }, base64)
+
+  const dialog = page.getByRole('dialog', { name: '批量导入消息' })
+  await expect(dialog).toBeVisible()
+  // 三个 txt + 一个 html 都认出来了，png 被跳过
+  await expect(dialog.locator('.batch-preview-head')).toContainText('4 条')
+  await expect(dialog.locator('.batch-row').first()).toContainText('蓝桥杯备赛群')
+  // .html 条目剥掉了标签，不是把 <p> 当正文
+  await expect(dialog).toContainText('数学建模通知群')
+  await expect(dialog).not.toContainText('<p>')
+  // GBK 编码的条目不能变成乱码
+  await expect(dialog).toContainText('电子设计竞赛群')
+
+  await dialog.getByRole('button', { name: /仅保存到本机（4 条）/ }).click()
+  await expect(dialog).toBeHidden()
+  await expect(page.locator('.local-message')).toHaveCount(4)
 })
