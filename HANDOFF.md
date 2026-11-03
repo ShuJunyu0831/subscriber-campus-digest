@@ -8,7 +8,7 @@
 ## 一、一句话现状
 
 Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 GitHub 私有仓库，
-`npm test` **22 组 Playwright 全绿**、`npm run build` 通过。
+`npm test` **23 组 Playwright 全绿**、`npm run build` 通过。
 
 本轮（11-03）补齐了四件事：**信息分类/版本/去重引擎、公众号订阅、赛事官网一键入口、右下角模型选择**；
 随后打通了 **P0 真实数据链路**（`npm run collect` 官网直采 + 快照 + 桌面版实时抓取，详见待办区 P0）、
@@ -31,13 +31,13 @@ Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 
 ```bash
 npm install
 npm run dev              # 开发：http://127.0.0.1:5173
-npm test                 # Web 端 22 组 Playwright（约 50 秒）
+npm test                 # Web 端 23 组 Playwright（约 50 秒）
 npm run build            # 类型检查 + 生产构建
 npm run collect          # 真实抓取竞赛官网 → src/live/competitions.json + 桌面版采集器
 
 npm run desktop          # 直接以 Electron 运行
 npm run desktop:portable # 重新打免安装包 → desktop-dist/Subscriber（会先 collect --lenient）
-npm run desktop:verify   # 拉起打包后的 exe 跑 18 项检查（含 IPC 探针）
+npm run desktop:verify   # 拉起打包后的 exe 跑 22 项检查（含 IPC 探针）
 ```
 
 演示时可以按这条路径走一遍（能一次看完四个新功能）：
@@ -144,6 +144,7 @@ src/
   SplitText.tsx       逐字动画标题
   WechatInbox.tsx     消息与订阅（本机消息箱、批量导入、逐条 AI 分析、关注源/公众号分区）
   shareImport.ts      批量粘贴文本拆分（来源名行识别、空行兜底），纯函数、无副作用
+  dropImport.ts       拖放读取（同步取 DataTransfer → 异步读文件、.html 剥标签、大小与类型护栏），纯函数
   FollowSources.tsx   关注源：竞赛官网勾选与自定义抓取、小程序登记与卡片导入
   follows.ts          关注配置读写（localStorage）+ 信息库过滤用的 liveSourceId 集合
   localStore.ts       IndexedDB 本地存储（消息含 channel / analyzedAt、批量写入）+ `readPreference/writePreference`
@@ -154,7 +155,7 @@ electron/             主进程（IPC：live:fetch / live:fetch-custom / rss:fet
 electron/share-args.cjs  外部转发参数解析（协议链接 / --share-text / --share-file），纯函数、被验证脚本直接断言
 electron/live/        collector.cjs（npm run collect 生成，已 gitignore）
 .github/workflows/ci.yml  CI：build + Playwright（Node 20 + Chromium）
-tests/prototype.spec.ts   22 组 Playwright 用例
+tests/prototype.spec.ts   23 组 Playwright 用例
 ```
 
 ---
@@ -335,15 +336,31 @@ B. 从「转发到其他应用」接收（`electron/share-args.cjs` 新建、`ma
   - 程序已在运行时再次被唤起：`second-instance` 里解析 argv 推进 `shareQueue`，不重开窗口。
 - `shareQueue` + `share:pull` IPC（取走即清空）+ `share:pending` 事件（只发数量，用来唤醒渲染层）。
   渲染层 `pullIncomingShares()` 拉取 → `App.tsx` 切到「消息与订阅」→ `WechatInbox` 收到 `incoming` 自动打开批量导入。
-- 两条手动入口：拖放文件/选中文字（`dataTransfer.files` + `getData('text/plain')`，≤2MB）、「从剪贴板读取」。
+- 两条手动入口：拖放文件/选中文字、「从剪贴板读取」。
 - 界面上有一块「三种进法」说明（`.share-entry-ways`），把路径讲清楚，不让用户猜。
 - **诚实边界（必须原样保留在界面与文档里）**：微信「转发到其他应用」里显示哪些应用，由微信客户端和 Windows 注册表共同决定，
   第三方应用无法自行插入那个列表。所以界面上同时给出启动参数快捷方式、拖放、剪贴板三条替代路径。
 
-C. 验证
+C. 拖放修复（`src/dropImport.ts` 新建、`App.tsx`、`WechatInbox.tsx`）
+- 症状：把聊天记录文件或选中文字拖进窗口，界面毫无反应。
+- 根因有两个，都会导致「静默失败」：
+  1. `drop` 只绑在 `.local-inbox-section` 上，而 HTML5 要求 `dragover` 被 `preventDefault()` 才承认该处是合法放置目标。
+     拖到页面其他地方时 `drop` 根本不触发；Electron 默认还会去导航到那个文件，被主进程 `will-navigate` 拦掉 → 什么都不发生。
+  2. `getData('text/plain')` 写在 `await file.text()` 之后。DataTransfer 在回调的同步阶段结束后就进入保护模式被清空，
+     所以「文件 + 文字」一起拖时，文字部分会丢。
+- 修法：`App.tsx` 在 window 捕获阶段统一接 `dragenter/dragover/dragleave/drop/dragend`，全部 `preventDefault()`；
+  读取逻辑抽到 `readDroppedContent()`（先同步取纯文本与 File 列表，再异步读文件内容），`.html` 走 `htmlFileToText()` 剥标签。
+  拖拽中显示整窗遮罩 `.drop-overlay`（`pointer-events: none`，绝不能吃掉 drop 事件）。
+  收到内容后走和外部转发完全相同的通道：`setView('wechat')` + `setIncomingShare()` → 消息箱打开批量导入。
+- `WechatInbox` 只接收 `dragActive` 用于高亮，不再自己绑 drop（避免重复处理）。
+
+D. 验证
 - `electron/verify-package.mjs` 追加 `parseShareArgs` 纯函数断言、用临时 `.txt` 走 `--share-file` 启动并断言
   「外部转发内容自动进入批量导入」「转发内容被拆成可保存的条目」「转发文件里的来源名被识别」，检查项 16 → **18**。
-- Playwright 新增 2 组（公众号链接订阅识别账号读正文并入库；拖入文件/文字进入批量导入），共 **22 组**。
+- 拖放修复后再加 4 项（先回到「今日精选」再拖，证明窗口任意位置都能接住）：整窗提示出现、自动切页进批量导入、
+  拆成可保存条目、松手后提示收起，检查项 18 → **22**。
+- Playwright 新增 2 组（公众号链接订阅识别账号读正文并入库；拖入文件/文字进入批量导入），共 **23 组**
+  （另加一组「拖入非文本文件给出明确提示」，不静默失败）。
 
 ---
 
@@ -368,6 +385,9 @@ C. 验证
 | python 批量替换遇 CRLF 静默失败 | 文件是 CRLF，脚本里用 LF 拼的 `old` 永远匹配不到；再叠加「只断言替换后存在」的写法，会静默漏改。批量替换改用 Edit 工具，或按 `\r\n` 构造。 |
 | 命令行参数丢换行 | Windows 下 `--share-text "第一行\n第二行"` 传不进 Electron，拆分结果为 0 条。验证脚本改用 `--share-file` 传临时 `.txt`，真实链路也一样稳。 |
 | 弹窗叠弹窗点不到 | `desktop:verify` 里首屏摘要弹框的 `.modal-backdrop` 层级更高，会拦住后面的批量导入弹窗点击。先关摘要弹框，再操作下层弹窗。 |
+| 拖放「拖了没反应」 | 根因：`dragover` 只绑在 `.local-inbox-section` 上。HTML5 规定 dragover 必须 preventDefault 才承认那是合法放置目标，拖到页面其他地方时 `drop` **根本不触发**（Electron 还会顺手去导航那个文件，被 `will-navigate` 拦掉，于是彻底静默）。修法：window 捕获阶段统一 `dragover`/`drop` preventDefault（`src/dropImport.ts` + `App.tsx`），整窗提示用 `pointer-events: none` 的遮罩。 |
+| `DataTransfer` 异步后变空 | `getData()` 只能在事件回调的**同步阶段**读，handler 一旦 await（比如先 `await file.text()`），DataTransfer 进入保护模式被清空，拖「文件 + 文字」时文字部分会静默丢失。现在先同步取 `getData('text/plain')` 与 `data.files`，再去读文件内容。 |
+| 用户跑的还是旧 exe | 打包目录里同时有多个 `Subscriber.exe` 在跑时，改代码不会生效。改完必须 `taskkill //F //IM Subscriber.exe` 再重打包，`desktop:verify` 会拉起新 exe。 |
 
 ---
 
@@ -376,7 +396,7 @@ C. 验证
 直接粘贴：
 
 > 继续 Subscriber 项目，路径 `D:/workbuddy/2026-10-31-18-32-31`，先读 `HANDOFF.md` 和
-> `.workbuddy/memory/` 下的记录。Web 版与 Windows 桌面版都已完成，`npm test` 22 组全绿，
+> `.workbuddy/memory/` 下的记录。Web 版与 Windows 桌面版都已完成，`npm test` 23 组全绿，
 > 已具备分类/版本/去重引擎、公众号订阅与 RSS 真实订阅、四个官网直采源、赛事官网入口与模型选择。
 > 我想继续做 **（写你这次要做的具体事）**。
 

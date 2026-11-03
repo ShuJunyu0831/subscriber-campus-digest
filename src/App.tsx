@@ -51,6 +51,7 @@ import { DEFAULT_MODEL_ID, resolveModel } from './llmModels'
 import { readCredentials, summarizeWithLlm } from './llmClient'
 import { readPreference, writePreference } from './localStore'
 import { enabledLiveSourceIds, readFollows, saveFollows, type FollowedSource } from './follows'
+import { isImportableDrag, readDroppedContent } from './dropImport'
 
 const navItems: { id: View; label: string; icon: typeof Inbox }[] = [
   { id: 'today', label: '今日精选', icon: Inbox },
@@ -621,6 +622,8 @@ export default function App() {
   const [follows, setFollows] = useState<FollowedSource[]>(() => readFollows())
   /** 外部转发进来的内容：收到就切到消息页并打开批量导入 */
   const [incomingShare, setIncomingShare] = useState<{ text: string; stamp: number } | null>(null)
+  /** 有东西正被拖到窗口上：用来显示整窗提示并高亮消息箱 */
+  const [dragActive, setDragActive] = useState(false)
   const [isMobileViewport, setIsMobileViewport] = useState(() => window.innerWidth < 560)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const model = resolveModel(modelId)
@@ -713,6 +716,72 @@ export default function App() {
     const off = bridge.onIncomingShare?.(() => { void take() })
     return () => { active = false; off?.() }
   }, [])
+  /**
+   * 整个窗口都能接住拖放。
+   * 只把 drop 绑在消息箱那个区块上是不够的：HTML5 要求 dragover 被 preventDefault
+   * 才算合法放置目标，拖到页面其他地方时 drop 压根不会触发（Electron 还会顺手去
+   * 导航到那个文件，被 will-navigate 拦掉，用户看到的就是「拖了没反应」）。
+   * 所以这里在 window 上用捕获阶段统一拦，再走和外部转发同一条通道交给消息箱。
+   */
+  useEffect(() => {
+    let depth = 0
+    const reset = () => { depth = 0; setDragActive(false) }
+
+    const onDragEnter = (event: DragEvent) => {
+      if (!isImportableDrag(event.dataTransfer)) return
+      event.preventDefault()
+      depth += 1
+      setDragActive(true)
+    }
+    const onDragOver = (event: DragEvent) => {
+      if (!isImportableDrag(event.dataTransfer)) return
+      // 不 preventDefault 就没有 drop；dropEffect 决定光标显示「复制」还是禁止符号
+      event.preventDefault()
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+      // 已经是 true 时 React 会跳过更新，不会因为拖拽移动而反复渲染
+      setDragActive(true)
+    }
+    // 拖过子元素时 dragleave 会连续触发，用计数判断是不是真的离开了窗口
+    const onDragLeave = (event: DragEvent) => {
+      if (!isImportableDrag(event.dataTransfer)) return
+      depth = Math.max(0, depth - 1)
+      if (depth === 0) setDragActive(false)
+    }
+    const onDrop = (event: DragEvent) => {
+      if (!isImportableDrag(event.dataTransfer)) return
+      event.preventDefault()
+      reset()
+      const data = event.dataTransfer
+      void readDroppedContent(data).then(result => {
+        if (!result.text) {
+          notify(result.skipped.length > 0
+            ? `没有读到可导入的文字：${result.skipped.slice(0, 2).join('、')}`
+            : '没有读到可导入的文字：拖进来的请是 .txt / .md / .html 聊天记录，或直接拖选中的文字')
+          return
+        }
+        setView('wechat')
+        setIncomingShare({ text: result.text, stamp: Date.now() })
+        notify(result.skipped.length > 0
+          ? `已接收${result.fileCount > 0 ? ` ${result.fileCount} 个文件` : ''}，${result.skipped.length} 个被跳过`
+          : '已接收拖入的内容，确认拆分后再保存到本机')
+      })
+    }
+    // 拖到窗口外松手会触发 dragend，这里兜底清掉高亮，避免一直亮着
+    const onDragEnd = () => reset()
+
+    window.addEventListener('dragenter', onDragEnter, true)
+    window.addEventListener('dragover', onDragOver, true)
+    window.addEventListener('dragleave', onDragLeave, true)
+    window.addEventListener('drop', onDrop, true)
+    window.addEventListener('dragend', onDragEnd, true)
+    return () => {
+      window.removeEventListener('dragenter', onDragEnter, true)
+      window.removeEventListener('dragover', onDragOver, true)
+      window.removeEventListener('dragleave', onDragLeave, true)
+      window.removeEventListener('drop', onDrop, true)
+      window.removeEventListener('dragend', onDragEnd, true)
+    }
+  }, [notify])
   useEffect(() => {
     const shareState = new URLSearchParams(window.location.search).get('share')
     if (!shareState) return
@@ -942,7 +1011,7 @@ export default function App() {
             </div>
           </>}
 
-          {view === 'wechat' && <WechatInbox addItem={addItem} notify={notify} modelName={model.name} library={library} onImportArticle={importArticle} follows={follows} onFollowsChange={setFollows} incoming={incomingShare} />}
+          {view === 'wechat' && <WechatInbox addItem={addItem} notify={notify} modelName={model.name} library={library} onImportArticle={importArticle} follows={follows} onFollowsChange={setFollows} incoming={incomingShare} dragActive={dragActive} />}
 
           {(view === 'library' || view === 'favorites') && <>
             <section className="page-heading library-heading"><div><span className="eyebrow">{view === 'library' ? 'INFORMATION LIBRARY' : 'SAVED FOR LATER'}</span><SplitText tag="h1" text={pageTitle} effect="rise" splitType="chars" delay={58} duration={0.8} staggerFrom="start" trigger="load" textAlign="left" className="split-heading" /><p>{view === 'library' ? '所有导入与发现的信息，已按事件归并、去重并标注版本。' : '把值得关注的内容留给合适的时间。'}</p></div><button className="button primary desktop-page-action" onClick={() => setImportOpen(true)}><Plus size={17} />导入信息</button></section>
@@ -1016,6 +1085,13 @@ export default function App() {
       {digestOpen && <DigestModal items={dailyItems} stats={library.stats} modelName={model.name} onClose={() => setDigestOpen(false)} onOpenItem={openItem} notify={notify} />}
       {taxonomyOpen && <TaxonomyModal library={library} onClose={() => setTaxonomyOpen(false)} onOpenGroup={id => setSelectedId(id)} />}
       {toast && <div className="toast" role="status"><CheckCircle2 size={18} />{toast}</div>}
+      {dragActive && <div className="drop-overlay" aria-hidden="true">
+        <div className="drop-overlay-card">
+          <Upload size={30} />
+          <strong>松手就导入消息箱</strong>
+          <span>聊天记录 .txt / .md / .html，或直接拖选中的文字</span>
+        </div>
+      </div>}
     </div>
   )
 }

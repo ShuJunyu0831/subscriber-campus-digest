@@ -641,20 +641,34 @@ var ct = "1762000000";
 
 test('拖入聊天记录文件或选中的文字即可进入批量导入', async ({ page }) => {
   await openHome(page)
-  await page.locator('.main-nav').getByRole('button', { name: /消息与订阅/ }).click()
+  // 故意不先在消息页：拖到首页（窗口任意位置）也要能接住并自动切页
+  await expect(page.getByRole('heading', { name: '今日精选', exact: true })).toBeVisible()
 
   await page.evaluate(() => {
-    const target = document.querySelector('.local-inbox-section') as HTMLElement
+    const target = document.body
     const data = new DataTransfer()
     data.items.add(new File(['蓝桥杯备赛群\n省赛 11 月 25 日开始报名。'], 'chat.txt', { type: 'text/plain' }))
     data.setData('text/plain', 'ACM 集训队通知群\n校赛报名 11 月 18 日截止。')
     const fire = (type: string) => target.dispatchEvent(
       new DragEvent(type, { dataTransfer: data, bubbles: true, cancelable: true }),
     )
+    fire('dragenter')
     fire('dragover')
-    fire('drop')
   })
 
+  // 拖到窗口上会给出整窗提示，而不是只有那个小方块有反应
+  await expect(page.locator('.drop-overlay')).toBeVisible()
+  await expect(page.locator('.drop-overlay')).toContainText('松手就导入消息箱')
+
+  await page.evaluate(() => {
+    const target = document.body
+    const data = new DataTransfer()
+    data.items.add(new File(['蓝桥杯备赛群\n省赛 11 月 25 日开始报名。'], 'chat.txt', { type: 'text/plain' }))
+    data.setData('text/plain', 'ACM 集训队通知群\n校赛报名 11 月 18 日截止。')
+    target.dispatchEvent(new DragEvent('drop', { dataTransfer: data, bubbles: true, cancelable: true }))
+  })
+
+  await expect(page.locator('.drop-overlay')).toBeHidden()
   const dialog = page.getByRole('dialog', { name: '批量导入消息' })
   await expect(dialog).toBeVisible()
   await expect(dialog.locator('.batch-preview-head')).toContainText('2 条')
@@ -662,4 +676,16 @@ test('拖入聊天记录文件或选中的文字即可进入批量导入', async
   await expect(dialog).toBeHidden()
   await expect(page.locator('.local-message')).toHaveCount(2)
   await expect(page.locator('.local-message-list')).toContainText('蓝桥杯备赛群')
+})
+
+test('拖入非文本文件时给出明确提示，不会静默失败', async ({ page }) => {
+  await openHome(page)
+  await page.evaluate(() => {
+    const data = new DataTransfer()
+    data.items.add(new File([new Uint8Array([1, 2, 3])], 'photo.png', { type: 'image/png' }))
+    document.body.dispatchEvent(new DragEvent('drop', { dataTransfer: data, bubbles: true, cancelable: true }))
+  })
+  await expect(page.locator('.toast')).toContainText('没有读到可导入的文字')
+  await expect(page.locator('.toast')).toContainText('photo.png')
+  await expect(page.getByRole('dialog', { name: '批量导入消息' })).toBeHidden()
 })

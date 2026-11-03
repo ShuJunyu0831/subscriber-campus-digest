@@ -69,6 +69,8 @@ interface WechatInboxProps {
   onFollowsChange: (next: FollowedSource[]) => void
   /** 外部转发进来的内容（App 收到后切到本页并传进来），stamp 变化即重新导入一次 */
   incoming?: { text: string; stamp: number } | null
+  /** 有内容正被拖到窗口上：由 App 的窗口级监听驱动，这里只用来高亮消息箱 */
+  dragActive?: boolean
 }
 
 const SUBSCRIPTION_KEY = 'subscriber-account-subs'
@@ -105,7 +107,7 @@ function InlineModal({ title, eyebrow, children, onClose, wide = false }: {
   )
 }
 
-export default function WechatInbox({ addItem, notify, modelName, library, onImportArticle, follows, onFollowsChange, incoming }: WechatInboxProps) {
+export default function WechatInbox({ addItem, notify, modelName, library, onImportArticle, follows, onFollowsChange, incoming, dragActive = false }: WechatInboxProps) {
   const isDesktopShell = Boolean(window.subscriberDesktop?.isDesktop)
   const canReadClipboard = Boolean(window.subscriberDesktop?.readClipboard)
 
@@ -129,7 +131,6 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
   const [analysisNote, setAnalysisNote] = useState('')
   const [confirmClear, setConfirmClear] = useState(false)
   const [rulesOpen, setRulesOpen] = useState(false)
-  const [dragging, setDragging] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => { writePreference(SUBSCRIPTION_KEY, subscribed) }, [subscribed])
@@ -298,31 +299,10 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
     notify('已接收外部转发的内容，确认拆分后再保存到本机')
   }, [incoming?.stamp, incoming?.text, openBatch, notify])
 
-  /** 把转发的聊天记录文件 / 选中的文字直接拖进来。 */
-  const handleDrop = async (event: React.DragEvent) => {
-    event.preventDefault()
-    setDragging(false)
-    const data = event.dataTransfer
-    const chunks: string[] = []
-    for (const file of Array.from(data.files ?? []).slice(0, 10)) {
-      const textLike = file.type.startsWith('text/') || /\.(txt|md|markdown|log|html?|json|csv)$/i.test(file.name)
-      if (!textLike || file.size > 2 * 1024 * 1024) continue
-      try {
-        chunks.push(await file.text())
-      } catch {
-        // 单个文件读不出来就跳过，不影响其余内容
-      }
-    }
-    const plain = data.getData('text/plain')
-    if (plain.trim()) chunks.push(plain)
-    if (chunks.length === 0) {
-      notify('没有读到可导入的文字：试试复制后点「从剪贴板读取」，或把 .txt 聊天记录拖进来')
-      return
-    }
-    openBatch('wechat', chunks.join('\n\n'))
-    notify(`已接收 ${chunks.length} 段内容，确认拆分后再保存`)
-  }
-
+  /**
+   * 拖进来的内容由 App 的窗口级监听读取并走 incoming 通道送进来，
+   * 这里不再自己绑 drop —— 只绑在消息箱区块上时，拖到页面其他地方 drop 根本不会触发。
+   */
   const removeMessage = async (id: string) => {
     try {
       await deleteLocalMessage(id)
@@ -509,15 +489,13 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
         </div>
         <div>
           <strong>③ 拖进来 / 批量粘贴</strong>
-          <span>把转发出来的聊天记录文件（.txt / .html）直接拖到下方消息箱，或点“批量导入”粘贴多段文字。</span>
+          <span>把转发出来的聊天记录文件（.txt / .html）或选中的文字直接拖到窗口任意位置，出现「松手就导入」提示后松开即可；也可以点“批量导入”粘贴多段文字。</span>
         </div>
       </div>
 
       <section
-        className={`local-inbox-section ${dragging ? 'dropping' : ''}`}
-        onDragOver={event => { event.preventDefault(); setDragging(true) }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={handleDrop}
+        className={`local-inbox-section ${dragActive ? 'dropping' : ''}`}
+        aria-label="本机消息箱"
       >
         <div className="section-heading local-inbox-heading">
           <div><h2>本机消息箱</h2><span>{messages.length} 条</span>{analysisNote && <span className="analysis-note">{analysisNote}</span>}</div>

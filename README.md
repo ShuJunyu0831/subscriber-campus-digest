@@ -38,7 +38,7 @@
 npm install
 npm run dev      # http://127.0.0.1:5173
 npm run build    # 类型检查 + 生产构建
-npm test         # Playwright 端到端测试（22 组）
+npm test         # Playwright 端到端测试（23 组）
 ```
 
 ## 桌面版
@@ -46,7 +46,7 @@ npm test         # Playwright 端到端测试（22 组）
 ```bash
 npm run desktop           # 构建后以 Electron 直接运行
 npm run desktop:portable  # 组装免安装包到 desktop-dist/Subscriber
-npm run desktop:verify    # 拉起打包后的 exe 做 18 项端到端检查
+npm run desktop:verify    # 拉起打包后的 exe 做 22 项端到端检查
 ```
 
 `desktop:portable` 不使用 electron-builder 的 nsis 目标，而是自行「复制运行时 + 生成 asar + 单文件改名 + 写入图标与版本信息」，全程不做大目录重命名与批量删除。图标由 `build/icon.png` 经 `npm run desktop:icon` 生成七尺寸 `.ico`，再用 `resedit` 写入 PE 资源。
@@ -61,7 +61,9 @@ npm run desktop:verify    # 拉起打包后的 exe 做 18 项端到端检查
 | 启动参数 | `Subscriber.exe --share-text "..."` 或 `--share-file 聊天记录.txt` | 微信转发聊天记录生成的 `.txt` / `.html` 直接传路径 |
 | 二次启动 | 程序已在运行时再次被调用 | `second-instance` 把参数里的内容推进队列，不重开窗口 |
 
-另外两条不需要注册的手动入口：把文件或选中的文字**拖进窗口**、点「从剪贴板读取」。
+另外两条不需要注册的手动入口：把文件或选中的文字**拖进窗口任意位置**（会显示整窗「松手就导入」提示）、点「从剪贴板读取」。
+
+拖放接收的是 `.txt` / `.md` / `.html` / `.json` / `.csv` 聊天记录（单个 ≤2 MB、一次最多 10 个）以及直接拖选的文字；`.html` 会先剥掉标签转成纯文本再拆分，不会把整页 HTML 当正文。拖到窗口任何位置都能接住，不需要精确对准消息箱。
 
 **这里有一条无法绕过的限制**：微信「转发到其他应用」列表里显示哪些应用，由微信客户端与 Windows 的应用注册表共同决定，第三方应用无法自行把自己插进那个列表。如果 Subscriber 没有出现在里面，用上表的启动参数（在微信「打开方式」里选一次 Subscriber，或做一个快捷方式带上 `--share-file "%1"`），或者干脆用拖放 / 剪贴板。
 
@@ -87,6 +89,7 @@ src/
   SplitText.tsx       逐字动画标题
   WechatInbox.tsx     消息与订阅：本机消息箱、批量导入、逐条 AI 分析、三个分区
   shareImport.ts      批量文本拆分（来源名识别、空行兜底），纯函数
+  dropImport.ts       拖放读取：先同步取 DataTransfer、再异步读文件，.html 剥标签，纯函数
   FollowSources.tsx   关注源：竞赛官网勾选与自定义抓取、小程序登记
   follows.ts          关注配置读写与信息库过滤
   localStore.ts       IndexedDB 本地存储 + 轻量偏好

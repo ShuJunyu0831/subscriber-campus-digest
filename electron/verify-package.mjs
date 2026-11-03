@@ -186,6 +186,38 @@ try {
     await forwardedDialog.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {})
   }
 
+  // 2.7 拖放：故意先回到「今日精选」，证明拖到窗口任意位置都能接住
+  //     （只把 drop 绑在消息箱区块上时，拖到别处 drop 根本不会触发，这是实际报过的问题）
+  await page.locator('.main-nav').getByRole('button', { name: /今日精选/ }).click()
+  await page.waitForTimeout(600)
+  await page.evaluate(() => {
+    const data = new DataTransfer()
+    data.setData('text/plain', '拖放验证群\n省赛报名 12 月 1 日截止。')
+    for (const type of ['dragenter', 'dragover']) {
+      document.body.dispatchEvent(new DragEvent(type, { dataTransfer: data, bubbles: true, cancelable: true }))
+    }
+  })
+  const dropOverlay = page.locator('.drop-overlay')
+  await dropOverlay.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {})
+  check('拖到窗口任意位置都有整窗松手提示', await dropOverlay.isVisible(),
+    (await dropOverlay.innerText().catch(() => '')).replace(/\s+/g, ' '))
+
+  await page.evaluate(() => {
+    const data = new DataTransfer()
+    data.setData('text/plain', '拖放验证群\n省赛报名 12 月 1 日截止。')
+    document.body.dispatchEvent(new DragEvent('drop', { dataTransfer: data, bubbles: true, cancelable: true }))
+  })
+  const droppedDialog = page.getByRole('dialog', { name: '批量导入消息' })
+  await droppedDialog.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {})
+  check('拖入的文字自动切页并进入批量导入', await droppedDialog.isVisible())
+  if (await droppedDialog.isVisible()) {
+    const droppedHead = await droppedDialog.locator('.batch-preview-head').innerText().catch(() => '')
+    check('拖入内容被拆成可保存的条目', /1 条/.test(droppedHead), droppedHead)
+    await droppedDialog.getByRole('button', { name: '取消' }).click()
+    await droppedDialog.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {})
+  }
+  check('松手后整窗提示已收起', await dropOverlay.isHidden().catch(() => true))
+
 
   // 4. 走遍全部导航页面
   for (const [index, label] of NAV.entries()) {
