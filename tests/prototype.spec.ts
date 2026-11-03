@@ -421,3 +421,63 @@ test('公众号文章可以打开演示全文阅读', async ({ page }) => {
   await reader.locator('.modal-actions').getByRole('button', { name: '关闭' }).click()
   await expect(reader).toBeHidden()
 })
+
+test('可添加真实 RSS 订阅源：抓取、分组、阅读全文并入库', async ({ page }) => {
+  const feed = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>温医大竞赛订阅</title>
+    <item>
+      <title>关于举办2026年校园程序设计竞赛的通知</title>
+      <link>https://example.com/p/1</link>
+      <pubDate>Mon, 02 Nov 2026 09:00:00 +0800</pubDate>
+      <description><![CDATA[<p>面向全校本科生，三人组队，11月20日前在教务系统报名。</p>]]></description>
+      <content:encoded><![CDATA[<p>面向全校本科生，三人组队参赛。</p><p>报名截止时间为11月20日，逾期不再补报。</p>]]></content:encoded>
+    </item>
+    <item>
+      <title>图书馆冬季开放时间调整</title>
+      <link>https://example.com/p/2</link>
+      <pubDate>Sun, 01 Nov 2026 08:00:00 +0800</pubDate>
+      <description>自11月10日起，图书馆闭馆时间调整为22:30。</description>
+    </item>
+  </channel>
+</rss>`
+  await page.route('https://example.com/feed.xml', route => route.fulfill({
+    status: 200,
+    contentType: 'application/rss+xml; charset=utf-8',
+    headers: { 'access-control-allow-origin': '*' },
+    body: feed,
+  }))
+
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /微信消息/ }).click()
+  await page.getByRole('tab', { name: /公众号订阅/ }).click()
+
+  await page.locator('.account-rss').getByRole('button', { name: '添加' }).click()
+  const dialog = page.getByRole('dialog', { name: '添加订阅源' })
+  await dialog.getByLabel('订阅源名称').fill('温医大竞赛订阅')
+  await dialog.getByLabel('RSS / Atom 地址').fill('https://example.com/feed.xml')
+  await dialog.getByRole('button', { name: '添加并抓取' }).click()
+  await expect(dialog).toBeHidden()
+
+  // 订阅源在界面上表现为一个「账号」，并标注内容来自真实抓取
+  const group = page.locator('.feed-group').filter({ hasText: '温医大竞赛订阅' })
+  await expect(group).toBeVisible()
+  await expect(group.locator('.trust-chip.rss')).toContainText('真实抓取')
+  await expect(group).toContainText('关于举办2026年校园程序设计竞赛的通知')
+  await expect(group).toContainText('图书馆冬季开放时间调整')
+
+  // 全文来自订阅源正文（content:encoded），不是演示文案
+  const article = group.locator('.feed-article').filter({ hasText: '校园程序设计竞赛' })
+  await article.locator('.feed-title').click()
+  await article.getByRole('button', { name: '阅读全文' }).click()
+  const reader = page.getByRole('dialog', { name: '文章全文预览' })
+  await expect(reader).toContainText('RSS 全文')
+  await expect(reader).toContainText('报名截止时间为11月20日，逾期不再补报。')
+  await reader.locator('.modal-actions').getByRole('button', { name: '关闭' }).click()
+
+  // 入库后与信息库其余条目一起走查重与分类
+  await article.getByRole('button', { name: '入库' }).click()
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  await expect(page.locator('.library-list')).toContainText('校园程序设计竞赛')
+})

@@ -6,5 +6,7 @@ contextBridge.exposeInMainWorld('subscriberDesktop', {
   version: process.versions.electron,
   isDesktop: true,
   /** 主进程实时抓取竞赛官网，返回 { ok, message, report }。 */
-  fetchLive: () => ipcRenderer.invoke('live:fetch')
+  fetchLive: () => ipcRenderer.invoke('live:fetch'),
+  /** 主进程抓取用户添加的 RSS / Atom 订阅源，返回 { ok, message, parsed }。 */
+  fetchRss: url => ipcRenderer.invoke('rss:fetch', url)
 })

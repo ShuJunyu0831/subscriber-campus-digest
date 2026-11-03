@@ -8,13 +8,14 @@
 ## 一、一句话现状
 
 Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 GitHub 私有仓库，
-`npm test` **17 组 Playwright 全绿**、`npm run build` 通过。
+`npm test` **18 组 Playwright 全绿**、`npm run build` 通过。
 
 本轮（11-03）补齐了四件事：**信息分类/版本/去重引擎、公众号订阅、赛事官网一键入口、右下角模型选择**；
-随后打通了 **P0 真实数据链路**（`npm run collect` 官网直采 + 快照 + 桌面版实时抓取，详见待办区 P0）
-和 **P2 模型真实路由**（`src/llmClient.ts` + LlmPicker 凭据区 + 导入真实调用 + Playwright mock 验证，详见待办区 P2），
-以及 **P4 体验补完**（版本并排对比、收藏页搜索/排序、完成回顾本周本月切换、公众号全文阅读、GitHub Actions CI，详见待办区 P4）。
-仍然没做的是：公众号真实订阅源（P1）与安装包签名（P3）。
+随后打通了 **P0 真实数据链路**（`npm run collect` 官网直采 + 快照 + 桌面版实时抓取，详见待办区 P0）、
+**P2 模型真实路由**（`src/llmClient.ts` + LlmPicker 凭据区 + 导入真实调用 + Playwright mock 验证，详见待办区 P2）、
+**P4 体验补完**（版本并排对比、收藏页搜索/排序、完成回顾本周本月切换、公众号全文阅读、GitHub Actions CI，详见待办区 P4），
+以及 **P1 真实订阅源**（温医大学生处直采、RSS/Atom 真实订阅、桌面版主进程抓取，详见待办区 P1）。
+现在四个直采源合计 24 条真实条目；仍然没做的是安装包签名与 NSIS 安装包（P3）。
 
 ---
 
@@ -25,7 +26,7 @@ Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 
 ```bash
 npm install
 npm run dev              # 开发：http://127.0.0.1:5173
-npm test                 # Web 端 17 组 Playwright（约 37 秒）
+npm test                 # Web 端 18 组 Playwright（约 45 秒）
 npm run build            # 类型检查 + 生产构建
 npm run collect          # 真实抓取竞赛官网 → src/live/competitions.json + 桌面版采集器
 
@@ -47,6 +48,8 @@ npm run desktop:verify   # 拉起打包后的 exe 跑 13 项检查
 8. 打开首张卡片 → 版本记录右侧「并排对比」→ 弹窗并排看 V1 / V2，截止时间那行标「已变更」。
 9. 进「完成回顾」→ 切「本周 / 本月 / 全部」，列表按天或按月分组。
 10. 进「微信消息 → 公众号订阅」→ 点《数据结构》标题 → 「阅读全文」看演示全文。
+11. 左栏「我的 RSS 订阅」→「添加订阅源」→ 填名称与一个真实 RSS/Atom 地址 → 分组里立刻多出一组，
+    该组条目阅读弹窗顶部标「RSS 全文 · 真实抓取」；抓失败会直接报错，不会塞演示内容。桌面版这一步不受跨域限制。
 
 ---
 
@@ -120,8 +123,9 @@ src/
   liveSource.ts       官网直采核心（LIVE_SOURCES 源定义、列表/详情解析、截止时间候选）
   liveSnapshot.ts     快照 → InfoItem 转换、抓取时间展示
   live/competitions.json  真实抓取快照（npm run collect 产出，提交入库）
+  rss.ts              RSS 2.0 / Atom 解析、订阅增删、条目 → 文章/入库输入（三端复用）
   accounts.ts         公众号与文章演示数据、可信度等级
-  AccountFeed.tsx     公众号订阅页（分组、筛选、同步、查重、入库）
+  AccountFeed.tsx     订阅页（内置账号 + RSS 订阅、分组、筛选、同步、查重、入库）
   TaxonomyModal.tsx   分类规则与版本记录说明
   LlmPicker.tsx       右下角模型选择面板（含真实模型接入设置区）
   llmModels.ts        国内常见模型清单 + VENDOR_ENDPOINTS（9 家厂商端点预设）
@@ -133,10 +137,10 @@ src/
   data.ts             演示数据、InfoItem / NewItemInput / AddItemResult 类型
   index.css           全部样式（新功能样式集中在文件末尾）
 scripts/collect.mjs   真实采集脚本（esbuild 打包 liveSource → Node 抓取 → 写快照 + 桌面版采集器）
-electron/             主进程（含 live:fetch IPC）、打包、图标、验证脚本
+electron/             主进程（含 live:fetch / rss:fetch IPC）、打包、图标、验证脚本
 electron/live/        collector.cjs（npm run collect 生成，已 gitignore）
 .github/workflows/ci.yml  CI：build + Playwright（Node 20 + Chromium）
-tests/prototype.spec.ts   17 组 Playwright 用例
+tests/prototype.spec.ts   18 组 Playwright 用例
 ```
 
 ---
@@ -152,7 +156,9 @@ tests/prototype.spec.ts   17 组 Playwright 用例
 5. **每份摘要只给一份**，不做信息流无限刷新。
 6. 预算目标：每月 200 元以内，需要用户额度与处理频率控制。
 7. 首版文件范围：文字、Word、PDF、图片、普通 PPT。扫描件增强、超大 PPT、视频后置。
-8. **公众号仍为演示数据。** 微信没有面向第三方应用的订阅号读取接口，正式版需要用户授权的 RSS / 开放平台凭据；不要写成「已接入微信」。
+8. **不要说「已接入微信」。** 微信没有面向第三方应用的订阅号读取接口。内置公众号账号仍是演示数据；
+   真实订阅走「用户自己提供、已获授权的 RSS / Atom 地址」这条路（`src/rss.ts`），界面标注「真实抓取」，
+   抓不到就报错，不许用演示内容顶替失败结果。
 9. **模型选择器不发请求。** 只是界面标签，任何真实调用都要单独做密钥管理、计费提示与失败兜底。
 10. **官网只放能核实的入口。** 拿不准就留空显示「官网待核对」，不要编造链接。
 
@@ -167,6 +173,12 @@ tests/prototype.spec.ts   17 组 Playwright 用例
 - `vite.config.ts` 的 `base: './'` 是桌面版 `file://` 加载必需的。
 - 卡片结构是 `grid`（card-main / card-actions / card-extras 跨列），官网链接必须放在 `.card-extras`，
   不要再塞回 `.card-main`（它是 `<button>`，不能嵌套 `<a>`）。
+- **RSS 标题不要走 `htmlToParagraphs()`**：那个函数会过滤掉不足 8 字的内容（正文段落去噪用），
+  短标题（如「通知」）会被整条丢掉。标题/feed 名用 `bareText()`（只去标签与实体，不做长度过滤）。`src/rss.ts` 里已经分开了。
+- **`inferCategory` 的输入只给「标题 + meta 摘要」**，不要喂整页正文：整页里有「学院/活动/通知」这类词，
+  会把行政通知误判成「新闻」。
+- 公众号/订阅源分组里判断「是否已订阅」用的是 `activeIds = [...subscribed, ...rssAccounts.map(a=>a.id)]`，
+  新增来源类型时记得加进去，否则新来源的条目不会显示。
 
 ---
 
@@ -174,25 +186,56 @@ tests/prototype.spec.ts   17 组 Playwright 用例
 
 **P0 — 接真实数据链路（竞赛截止提醒链路已打通，2026-11-03）**
 - 已完成：`npm run collect` 从两个真实竞赛官网（mcm.edu.cn 通知公告、tiaozhanbei.net 动态）抓取公告，
-  经 `src/liveSource.ts` 解析 + 分类引擎归一，写出快照 `src/live/competitions.json`（提交入库，当前 10 条）。
+  经 `src/liveSource.ts` 解析 + 分类引擎归一，写出快照 `src/live/competitions.json`（提交入库；P1 扩源后当前 24 条）。
 - Web 版启动时把快照并入信息库（`src/liveSnapshot.ts`，id 从 1001 起），卡片来源显示「官网直采」，
   工具条有「官网直采 N 条 · 抓取于 …」标注；详情抽屉的原文依据会注明自动采集时间。
 - 桌面版额外有实时链路：`electron/main.cjs` 的 `live:fetch` IPC 调用 `electron/live/collector.cjs`
   （同一份 `liveSource.ts` 的 CJS 打包），preload 暴露 `fetchLive`，信息库工具条出现「实时抓取官网」按钮。
 - 诚实边界：抓到的标题/链接/发布日期/正文摘句都是官网原文；摘要与截止时间是机械提取的，
-  提取不到就留空标「待核对」，绝不编造；校内条目与公众号文章仍是演示数据。
+  提取不到就留空标「待核对」，绝不编造；RSS 订阅条目为真实抓取（见 P1），内置公众号文章仍是演示数据。
 - 真实数据上验证过的引擎行为：合并 3 条真实重复（研讨会第一次/第二次通知、揭榜挂帅系列文）、版本分组正常。
 - 剩余：`localStore.ts` 的「上传 → 分析」换真实 LLM 调用（P2 一起做，需密钥管理）；公众号真实订阅源归 P1。
 
-**P1 — 真实订阅源（温州医科大学教务处已接入，2026-11-03）**
-- 已完成：`src/liveSource.ts` 的 `LIVE_SOURCES` 新增温州医科大学教务处（排首位，用户优先级）。
-  首页列表即教务通知流（`info/1034` 学业管理、`info/1035` 教学建设），列表条目自带 ISO 日期；
-  详情页从 `<meta name="pageTitle">` 取完整标题（列表页标题被截断）、`<meta name="description">` 取摘要。
-- 解析器增强（通用）：`extractListLinks` 支持列表块内日期（`<span>2026-10-28</span>` 与川大式 `<p>11/02</p><span>2026</span>`）；
-  截止时间候选新增两条护栏——「X月X日以前/之前」是资格界限、日期等于发布日期的不算。
-- 快照现为 18 条：温医大 8 + mcm 5 + 挑战杯 5；测试断言改为来源构成断言（不写死快照数量）。
-- 下一步扩源：在 `LIVE_SOURCES` 数组加一个对象即可（需要该站点是服务端渲染 + 列表链接有固定特征）。
-- 公众号：微信无第三方读取接口，保持演示数据（已在 README 与界面明确标注），待用户授权 RSS 凭据后替换 `accountArticles`。
+**P1 — 真实订阅源（温医大双源 + RSS/Atom 订阅，已完成，2026-11-03）**
+
+A. 官网直采扩源（`src/liveSource.ts`）
+- 温州医科大学教务处（`info/1034` 学业管理 + `info/1035` 教学建设）：列表条目自带 ISO 日期；
+  详情页从 `<meta name="pageTitle">` 取完整标题（列表标题被截断）、`<meta name="description">` 取摘要。
+- 温州医科大学学生处（`info/1210` 通知公告）：**日期在标题之前**，形如 `<dd class="mm">十月</dd><dd class="dd">28</dd>`，
+  列表 `<li>` 里拿不到 → 新增 `parseLeadingDate()` + `chineseMonth()`（支持「十月」「11」；「十一/十二」特判，
+  避免被当成 1 月/2 月），在 `extractListLinks` 末尾用匹配位置前的 400 字符兜底。
+- 同时把校级通知公告源换掉了：那个列表出来全是招生/物业/人才补贴，分类全落「新闻」，价值太低。
+- 解析器通用增强：`extractListLinks` 支持列表块内日期（`<span>2026-10-28</span>` 与川大式 `<p>11/02</p><span>2026</span>`）；
+  相对链接改用 `new URL(href, source.listUrl)` 解析（修掉 `../info/...` 拼错）；截止时间候选加两条护栏——
+  「X月X日以前/之前」是资格界限不算截止、日期等于发布日期的不算截止。
+- **分类输入收窄**：`inferCategory` 只喂「标题 + meta 摘要（截 120 字）」，不再喂整页正文。
+  之前学生处条目全被整页里的「学院/活动/通知」拽成「新闻」。
+- 快照现为 **24 条**：温医大教务处 8 + 温医大学生处 6 + mcm 5 + 挑战杯 5。
+  测试断言用来源构成（`温州医科大学学生处` 存在、条数 > 0），不写死快照数量。
+
+B. RSS / Atom 真实订阅（`src/rss.ts`，新建）
+- 自写解析器：RSS 2.0 `<item>` 与 Atom `<entry>` 双格式，处理 CDATA、`content:encoded`、
+  相对链接按 feed 地址补全、`pubDate`/`updated` 转 ISO；`htmlToParagraphs()` 保留段落边界并过滤 <8 字的碎片。
+- **`bareText()` 专供标题**：`htmlToParagraphs()` 的「≥8 字」过滤会把「通知」这种短标题整条丢掉（真实缺陷，踩过）。
+- 订阅管理：`readSubscriptions/saveSubscriptions/createSubscription`，localStorage 键 `subscriber-rss-subscriptions`。
+- 抓取：`fetchFeed(url, 12000)`，12 秒超时、按 `content-type`/`charset` 做 gbk 兜底、CORS 失败给可读报错。
+- 三端复用同一份解析器：Web 端直接 `fetch`；桌面版走 `electron/main.cjs` 的 `rss:fetch` IPC
+  （校验只允许 http/https → `collector.fetchFeed()`），`preload.cjs` 暴露 `fetchRss`，**完全绕开跨域**。
+  `scripts/collect-entry.ts` 里追加 `export { fetchFeed }`，esbuild 一并打进 `electron/live/collector.cjs`。
+
+C. 界面（`src/AccountFeed.tsx`）
+- 左栏新增「我的 RSS 订阅」区块：列出订阅源、「添加订阅源」（名称 + 地址，**先抓一次成功才写入**，
+  避免留下永远失败的源）、「立即刷新」、失败汇总提示。
+- 每个订阅源映射成一个 `OfficialAccount`（`id: 'rss:'+id`，`trustLabel: 'RSS 订阅'`）；
+  分组头显示 `真实抓取` 徽标；**判断可见性统一用 `activeIds`**，别再逐个 `subscribed.includes()`。
+- 阅读弹窗 eyebrow 按 `fullTextOrigin` 切换：「RSS 全文 · 真实抓取」/「ARTICLE READER · 演示全文」。
+- 入库时 `sourceName` 写进 `InfoItem.source`（`AccountArticle.sourceName`），信息库能看出条目来自哪个订阅源。
+- 测试：新增 1 组（`page.route` mock 一份 RSS XML → 添加 → 分组出现 → 阅读全文 → 入库），**18 组全绿**。
+
+D. 诚实边界
+- 不从微信读任何东西，也没有「接入微信」；真实订阅的前提是用户自己拿到、自己有权使用的 feed 地址。
+- 抓失败就报错，不用演示内容顶替。
+- 下一步（未做）：OPML 批量导入、按源单独设置抓取条数/间隔、正文清洗（去导航/版权尾巴）。
 
 **P2 — 模型真实路由（已打通，2026-11-03）**
 - `src/llmClient.ts`：凭据读写（localStorage `subscriber-llm-credentials`，只存本机）+
@@ -221,7 +264,8 @@ tests/prototype.spec.ts   17 组 Playwright 用例
 - 公众号全文阅读：`AccountArticle.fullText`（3 篇示例）→ 文章展开后「阅读全文」打开阅读弹窗，标注「演示全文」；
   无全文的文章明确提示「这篇只有摘要」，不会编造正文。
 - CI：`.github/workflows/ci.yml`（Node 20 + Chromium + `npm run build` + `npm test`，失败上传 test-results）。
-- 测试：17 组全绿（新增 4 组：版本对比字段变更、收藏搜索/筛选/排序、回顾分期计数、公众号全文）。
+- 测试：P4 完成时 17 组全绿（新增 4 组：版本对比字段变更、收藏搜索/筛选/排序、回顾分期计数、公众号全文）；
+  P1 追加 RSS 订阅 1 组后共 **18 组**。
 
 ---
 
@@ -248,8 +292,8 @@ tests/prototype.spec.ts   17 组 Playwright 用例
 直接粘贴：
 
 > 继续 Subscriber 项目，路径 `D:/workbuddy/2026-10-31-18-32-31`，先读 `HANDOFF.md` 和
-> `.workbuddy/memory/` 下的记录。Web 版与 Windows 桌面版都已完成，`npm test` 12 组全绿，
-> 已具备分类/版本/去重引擎、公众号订阅、赛事官网入口与模型选择。
+> `.workbuddy/memory/` 下的记录。Web 版与 Windows 桌面版都已完成，`npm test` 18 组全绿，
+> 已具备分类/版本/去重引擎、公众号订阅与 RSS 真实订阅、四个官网直采源、赛事官网入口与模型选择。
 > 我想继续做 **（写你这次要做的具体事）**。
 
 `.workbuddy/memory/2026-11-02.md` 有上一轮的实现细节（含每个 bug 的根因）；

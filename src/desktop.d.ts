@@ -16,6 +16,15 @@ declare global {
           logs: { source: string; ok: boolean; count: number; message: string }[]
         } | null
       }>
+      /** 桌面版可用：主进程抓取 RSS / Atom 订阅源（无跨域限制），返回 { ok, message, parsed }。 */
+      fetchRss?: (url: string) => Promise<{
+        ok: boolean
+        message: string
+        parsed: {
+          title: string | null
+          items: import('./rss').FeedItem[]
+        } | null
+      }>
     }
   }
 }

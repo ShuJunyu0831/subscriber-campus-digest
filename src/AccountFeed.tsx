@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ArrowUpRight,
   BellRing,
@@ -15,6 +15,7 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
+  Trash2,
   X,
 } from 'lucide-react'
 import {
@@ -27,6 +28,15 @@ import {
   type AccountArticle,
   type OfficialAccount,
 } from './accounts'
+import {
+  createSubscription,
+  feedItemToArticle,
+  fetchFeed,
+  readSubscriptions,
+  saveSubscriptions,
+  type ParsedFeed,
+  type RssSubscription,
+} from './rss'
 import { findExistingItem, parseDateText, similarity, type Classification, type LibraryClassification } from './classify'
 import type { InfoItem } from './data'
 import { readPreference, writePreference } from './localStore'
@@ -74,6 +84,11 @@ const RELATION_LABEL: Record<Relation, string> = {
   outdated: '旧版本',
 }
 
+/** 订阅源在界面上表现为形如 rss:<id> 的账号。 */
+function isRssGroup(account: OfficialAccount): boolean {
+  return account.id.startsWith('rss:')
+}
+
 export default function AccountFeed({ library, subscribed, onToggleSubscribe, onImportArticle, notify }: AccountFeedProps) {
   const [readIds, setReadIds] = useState<string[]>(() => readPreference<string[]>(READ_KEY, []))
   const [synced, setSynced] = useState<boolean>(() => readPreference<boolean>(SYNC_KEY, false))
@@ -85,29 +100,126 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
   const [expanded, setExpanded] = useState<string | null>(null)
   const [reader, setReader] = useState<FeedEntry | null>(null)
   const [managerOpen, setManagerOpen] = useState(false)
+  const [subscriptions, setSubscriptions] = useState<RssSubscription[]>(() => readSubscriptions())
+  const [rssArticles, setRssArticles] = useState<AccountArticle[]>([])
+  const [rssLoading, setRssLoading] = useState(false)
+  const [rssError, setRssError] = useState('')
+  const [addOpen, setAddOpen] = useState(false)
+  const [draftName, setDraftName] = useState('')
+  const [draftUrl, setDraftUrl] = useState('')
+  const [draftBusy, setDraftBusy] = useState(false)
 
   useEffect(() => { writePreference(READ_KEY, readIds) }, [readIds])
   useEffect(() => { writePreference(SYNC_KEY, synced) }, [synced])
 
+  /* ------------------------------ RSS 订阅源 ------------------------------ */
+
+  /** 桌面版走主进程抓取（无跨域限制）；浏览器版直接 fetch，失败时给出跨域提示。 */
+  const loadFeed = useCallback(async (url: string): Promise<ParsedFeed> => {
+    const bridge = window.subscriberDesktop?.fetchRss
+    if (bridge) {
+      const result = await bridge(url)
+      if (!result.ok || !result.parsed) throw new Error(result.message || '抓取失败')
+      return { title: result.parsed.title ?? undefined, items: result.parsed.items }
+    }
+    return fetchFeed(url)
+  }, [])
+
+  const refreshRss = useCallback(async (list: RssSubscription[], announce = false) => {
+    if (list.length === 0) { setRssArticles([]); setRssError(''); return }
+    setRssLoading(true)
+    setRssError('')
+    const collected: AccountArticle[] = []
+    const failures: string[] = []
+    for (const subscription of list) {
+      try {
+        const parsed = await loadFeed(subscription.url)
+        parsed.items.slice(0, 6).forEach((item, index) => collected.push(feedItemToArticle(subscription, item, index)))
+      } catch (error) {
+        failures.push(`${subscription.name}：${error instanceof Error ? error.message : '抓取失败'}`)
+      }
+    }
+    setRssArticles(collected)
+    setRssLoading(false)
+    if (failures.length > 0) setRssError(failures.join('；'))
+    if (announce) notify(failures.length > 0 ? `部分订阅源抓取失败：${failures[0]}` : `已抓取 ${collected.length} 篇真实文章`)
+  }, [loadFeed, notify])
+
+  useEffect(() => { void refreshRss(readSubscriptions()) }, [refreshRss])
+
+  /** 订阅源在界面上表现为一个「账号」，复用分组、去重与入库逻辑。 */
+  const rssAccounts = useMemo<OfficialAccount[]>(() => subscriptions.map(subscription => ({
+    id: `rss:${subscription.id}`,
+    name: subscription.name,
+    handle: subscription.url,
+    org: '我的订阅源',
+    description: '你自己添加的 RSS / Atom 订阅源，内容真实抓取。',
+    trust: 'media',
+    trustLabel: 'RSS 订阅',
+    topics: [],
+    avatar: subscription.name.slice(0, 1),
+    accent: '#8a653f',
+    subscribers: '—',
+    cadence: '手动刷新',
+    defaultSubscribed: true,
+  })), [subscriptions])
+
+  const activeIds = useMemo(() => [...subscribed, ...rssAccounts.map(account => account.id)], [subscribed, rssAccounts])
+  const accountLookup = useMemo(
+    () => new Map([...accountById, ...rssAccounts.map(account => [account.id, account] as const)]),
+    [rssAccounts],
+  )
+
+  const addSubscription = async () => {
+    const url = draftUrl.trim()
+    if (!/^https?:\/\/.+/i.test(url)) { notify('请填写以 http:// 或 https:// 开头的 RSS 地址'); return }
+    if (subscriptions.some(item => item.url === url)) { notify('这个地址已经订阅过了'); return }
+    setDraftBusy(true)
+    try {
+      // 先抓一次：抓不到就不写入，避免留下一个永远失败的订阅源
+      const parsed = await loadFeed(url)
+      const subscription = createSubscription(draftName.trim() || parsed.title || '我的订阅源', url)
+      const next = [...subscriptions, subscription]
+      setSubscriptions(next)
+      saveSubscriptions(next)
+      setAddOpen(false)
+      setDraftName('')
+      setDraftUrl('')
+      await refreshRss(next, true)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : '抓取失败')
+    } finally {
+      setDraftBusy(false)
+    }
+  }
+
+  const removeSubscription = (id: string) => {
+    const next = subscriptions.filter(item => item.id !== id)
+    setSubscriptions(next)
+    saveSubscriptions(next)
+    void refreshRss(next)
+    notify('已移除订阅源，已入库的信息会保留')
+  }
+
   const articles = useMemo(
-    () => [...(synced ? incomingArticles : []), ...accountArticles],
-    [synced],
+    () => [...rssArticles, ...(synced ? incomingArticles : []), ...accountArticles],
+    [rssArticles, synced],
   )
 
   const subscribedAccounts = useMemo(
-    () => officialAccounts.filter(account => subscribed.includes(account.id)),
-    [subscribed],
+    () => [...officialAccounts, ...rssAccounts].filter(account => activeIds.includes(account.id)),
+    [activeIds, rssAccounts],
   )
 
   const visibleArticles = useMemo(() => articles.filter(article => {
-    if (!subscribed.includes(article.accountId)) return false
+    if (!activeIds.includes(article.accountId)) return false
     if (activeAccount !== 'all' && article.accountId !== activeAccount) return false
     if (filter !== '全部' && article.category !== filter) return false
     if (unreadOnly && readIds.includes(article.id)) return false
     const keyword = query.trim().toLowerCase()
     if (keyword && !`${article.title}${article.digest}${article.keywords.join('')}`.toLowerCase().includes(keyword)) return false
     return true
-  }), [articles, subscribed, activeAccount, filter, unreadOnly, readIds, query])
+  }), [articles, activeIds, activeAccount, filter, unreadOnly, readIds, query])
 
   /** 同事件 + 同截止时间 → 视为转载重复，只保留可信度最高的来源，其余折叠为 mirrors。 */
   const libraryEntries = library.visible
@@ -127,22 +239,22 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
 
     return clusters.map(group => {
       const sorted = [...group].sort((a, b) => {
-        const accountA = accountById.get(a.accountId)
-        const accountB = accountById.get(b.accountId)
+        const accountA = accountLookup.get(a.accountId)
+        const accountB = accountLookup.get(b.accountId)
         return (trustWeight[accountB?.trust ?? 'aggregator'] - trustWeight[accountA?.trust ?? 'aggregator'])
           // 可信度相同时保留先发布的那条，把后发的“转发”折叠成镜像来源
           || (Date.parse(a.publishedAt) - Date.parse(b.publishedAt))
       })
       const primary = sorted[0]
-      const account = accountById.get(primary.accountId) ?? officialAccounts[0]
+      const account = accountLookup.get(primary.accountId) ?? officialAccounts[0]
       return {
         article: primary,
         account,
-        mirrors: sorted.slice(1).map(article => ({ article, account: accountById.get(article.accountId) ?? officialAccounts[0] })),
+        mirrors: sorted.slice(1).map(article => ({ article, account: accountLookup.get(article.accountId) ?? officialAccounts[0] })),
         ...relationOf(primary, libraryEntries),
       }
     }).sort((a, b) => Date.parse(b.article.publishedAt) - Date.parse(a.article.publishedAt))
-  }, [visibleArticles, libraryEntries])
+  }, [visibleArticles, libraryEntries, accountLookup])
 
   const grouped = useMemo(() => {
     const groups: { account: OfficialAccount; entries: FeedEntry[] }[] = []
@@ -154,7 +266,7 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
     return groups
   }, [entries])
 
-  const unreadCount = articles.filter(article => subscribed.includes(article.accountId) && !readIds.includes(article.id)).length
+  const unreadCount = articles.filter(article => activeIds.includes(article.accountId) && !readIds.includes(article.id)).length
   const duplicates = useMemo(
     () => entries.reduce((total, entry) => total + entry.mirrors.length, 0),
     [entries],
@@ -169,7 +281,7 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
     window.setTimeout(() => {
       setSynced(true)
       setSyncing(false)
-      const fresh = incomingArticles.filter(article => subscribed.includes(article.accountId))
+      const fresh = incomingArticles.filter(article => activeIds.includes(article.accountId))
       notify(`已拉取 ${fresh.length} 条新消息（演示数据，不会访问微信服务器）`)
     }, 900)
   }
@@ -190,11 +302,11 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
       <section className="account-overview">
         <div className="account-overview-main">
           <span className="briefing-label"><Rss size={15} />订阅源</span>
-          <h2>{subscribedAccounts.length} 个公众号，<br />今日 <em>{unreadCount}</em> 条待看。</h2>
+          <h2>{subscribedAccounts.length} 个订阅源，<br />今日 <em>{unreadCount}</em> 条待看。</h2>
           <p>按账号分组、按条归档；同一篇文章被多个号转载时只留一条，标注其余来源。</p>
         </div>
         <div className="account-overview-stats">
-          <div><strong>{articles.filter(article => subscribed.includes(article.accountId)).length}</strong><span>已订阅文章</span></div>
+          <div><strong>{articles.filter(article => activeIds.includes(article.accountId)).length}</strong><span>已订阅文章</span></div>
           <div><strong>{unreadCount}</strong><span>未读</span></div>
           <div><strong>{duplicates}</strong><span>已去重转载</span></div>
         </div>
@@ -209,7 +321,7 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
           <button type="button" className={`account-pill ${activeAccount === 'all' ? 'active' : ''}`} onClick={() => setActiveAccount('all')}>
             <span className="account-pill-all"><Rss size={15} /></span>
             <span className="account-pill-copy"><strong>全部账号</strong><small>{subscribedAccounts.length} 个来源</small></span>
-            <span className="account-pill-count">{articles.filter(article => subscribed.includes(article.accountId) && !readIds.includes(article.id)).length}</span>
+            <span className="account-pill-count">{articles.filter(article => activeIds.includes(article.accountId) && !readIds.includes(article.id)).length}</span>
           </button>
           {subscribedAccounts.map(account => {
             const accountUnread = articles.filter(article => article.accountId === account.id && !readIds.includes(article.id)).length
@@ -222,6 +334,32 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
             )
           })}
           <button type="button" className="account-discover" onClick={() => setManagerOpen(true)}><Plus size={15} />发现更多公众号</button>
+
+          <div className="account-rss">
+            <div className="account-rss-head">
+              <h3>我的 RSS 订阅</h3>
+              <button type="button" className="text-button" onClick={() => setAddOpen(true)}><Plus size={13} />添加</button>
+            </div>
+            {subscriptions.length === 0 && (
+              <p className="account-rss-empty">粘贴任意 RSS / Atom 地址（自建 RSSHub、WeRSS 或学校订阅源），文章会按来源分组出现在这里。</p>
+            )}
+            {subscriptions.map(subscription => (
+              <div className="account-rss-row" key={subscription.id}>
+                <span className="account-rss-dot" aria-hidden="true" />
+                <div>
+                  <strong>{subscription.name}</strong>
+                  <small>{rssArticles.filter(article => article.accountId === `rss:${subscription.id}`).length} 篇 · 真实抓取</small>
+                </div>
+                <button type="button" aria-label={`移除${subscription.name}`} onClick={() => removeSubscription(subscription.id)}><Trash2 size={13} /></button>
+              </div>
+            ))}
+            {subscriptions.length > 0 && (
+              <button type="button" className="account-rss-refresh" onClick={() => void refreshRss(subscriptions, true)} disabled={rssLoading}>
+                {rssLoading ? <><LoaderCircle className="spin" size={12} />抓取中…</> : <><RefreshCw size={12} />立即刷新</>}
+              </button>
+            )}
+            {rssError && <p className="account-rss-error" role="status"><CircleAlert size={12} />{rssError}</p>}
+          </div>
 
           <div className="account-sync-card">
             <div className="account-sync-line"><RefreshCw size={14} className={syncing ? 'spin' : ''} /><strong>{syncing ? '正在同步…' : synced ? '已同步最新' : '尚未同步'}</strong></div>
@@ -238,7 +376,7 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
               {CATEGORY_FILTERS.map(item => (
                 <button type="button" key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>
                   {item}
-                  {item !== '全部' && <span>{articles.filter(article => subscribed.includes(article.accountId) && article.category === item).length}</span>}
+                  {item !== '全部' && <span>{articles.filter(article => activeIds.includes(article.accountId) && article.category === item).length}</span>}
                 </button>
               ))}
             </div>
@@ -267,9 +405,11 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
                 <span className="account-avatar" style={{ background: group.account.accent }}>{group.account.avatar}</span>
                 <div>
                   <strong>{group.account.name}</strong>
-                  <small>{group.account.trustLabel} · {group.entries.length} 条</small>
+                  <small>{group.account.trustLabel} · {group.entries.length} 条{isRssGroup(group.account) ? ' · 来自你添加的订阅源' : ''}</small>
                 </div>
-                <span className={`trust-chip ${group.account.trust}`}>{group.account.trust === 'official' ? '官方' : group.account.trust === 'media' ? '媒体' : '非官方'}</span>
+                {isRssGroup(group.account)
+                  ? <span className="trust-chip rss"><Rss size={11} />真实抓取</span>
+                  : <span className={`trust-chip ${group.account.trust}`}>{group.account.trust === 'official' ? '官方' : group.account.trust === 'media' ? '媒体' : '非官方'}</span>}
               </header>
               <div className="feed-articles">
                 {group.entries.map(entry => {
@@ -372,11 +512,32 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
         </div>
       )}
 
+      {addOpen && (
+        <div className="modal-backdrop" onMouseDown={() => { if (!draftBusy) setAddOpen(false) }}>
+          <section className="modal" role="dialog" aria-modal="true" aria-label="添加订阅源" onMouseDown={event => event.stopPropagation()}>
+            <div className="modal-header">
+              <div><span className="eyebrow">RSS / ATOM 订阅</span><h2>添加订阅源</h2></div>
+              <button type="button" className="icon-button" aria-label="关闭" onClick={() => setAddOpen(false)} disabled={draftBusy}><X size={20} /></button>
+            </div>
+            <div className="modal-body">
+              <div className="search-disclosure"><ShieldCheck size={16} /><span>微信没有开放第三方读取个人订阅号的接口，请填写你已获授权的 RSS 地址（自建 RSSHub、WeRSS，或学校 / 竞赛官网的订阅源）。桌面版可直连抓取，浏览器需要订阅源允许跨域。</span></div>
+              <label className="field"><span>订阅源名称</span><input value={draftName} onChange={event => setDraftName(event.target.value)} placeholder="留空则使用订阅源自带名称" autoFocus /></label>
+              <label className="field"><span>RSS / Atom 地址</span><input value={draftUrl} onChange={event => setDraftUrl(event.target.value)} placeholder="https://example.com/feed.xml" /><small>抓取失败不会保存，避免留下永远失败的订阅源。</small></label>
+            </div>
+            <div className="modal-actions">
+              <span className="ai-note"><Info size={14} />只保存地址，不上传你的账号</span>
+              <button className="button secondary" onClick={() => setAddOpen(false)} disabled={draftBusy}>取消</button>
+              <button className="button primary" onClick={addSubscription} disabled={draftBusy}>{draftBusy ? <><LoaderCircle className="spin" size={15} />正在抓取</> : <><Plus size={15} />添加并抓取</>}</button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {reader && (
         <div className="modal-backdrop" onMouseDown={() => setReader(null)}>
           <section className="modal modal-wide article-reader" role="dialog" aria-modal="true" aria-label="文章全文预览" onMouseDown={event => event.stopPropagation()}>
             <div className="modal-header">
-              <div><span className="eyebrow">ARTICLE READER · 演示全文</span><h2>{reader.article.title}</h2></div>
+              <div><span className="eyebrow">{reader.article.fullTextOrigin === 'rss' ? 'RSS 全文 · 真实抓取' : 'ARTICLE READER · 演示全文'}</span><h2>{reader.article.title}</h2></div>
               <button type="button" className="icon-button" aria-label="关闭" onClick={() => setReader(null)}><X size={20} /></button>
             </div>
             <div className="modal-body reader-body">
@@ -392,7 +553,9 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
                 ? <div className="reader-text">{reader.article.fullText.map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div>
                 : <div className="reader-empty"><Info size={17} /><p><strong>这篇只有摘要</strong><span>演示数据未收录本篇全文，正式版会在获得授权后读取公众号原文。</span></p></div>}
               <div className="feed-keywords">{reader.article.keywords.map(keyword => <span key={keyword}>#{keyword}</span>)}</div>
-              <p className="reader-note"><ShieldCheck size={13} />演示全文仅用于展示阅读体验，不代表真实公众号内容；正文以原文链接为准。</p>
+              <p className="reader-note"><ShieldCheck size={13} />{reader.article.fullTextOrigin === 'rss'
+                ? '正文由你添加的订阅源提供，抓取后未经改写；如需核对请打开原文链接。'
+                : '演示全文仅用于展示阅读体验，不代表真实公众号内容；正文以原文链接为准。'}</p>
             </div>
             <div className="modal-actions">
               {reader.article.officialUrl && <a className="button secondary" href={reader.article.officialUrl} target="_blank" rel="noopener noreferrer">原文链接<ArrowUpRight size={14} /></a>}

@@ -46,6 +46,18 @@ export const LIVE_SOURCES: LiveSource[] = [
     summaryMeta: 'description',
   },
   {
+    // 学生处：通知公告列（info/1210），日期在标题前的 <dd>十月</dd><dd>28</dd> 块里
+    id: 'wmu-xsc',
+    name: '温州医科大学学生处',
+    homepage: 'https://xsc.wmu.edu.cn/',
+    listUrl: 'https://xsc.wmu.edu.cn/',
+    origin: 'https://xsc.wmu.edu.cn',
+    linkPattern: /^info\/1210\/\d+\.htm/,
+    limit: 6,
+    titleMeta: 'pageTitle',
+    summaryMeta: 'description',
+  },
+  {
     id: 'mcm',
     name: '全国大学生数学建模竞赛官网',
     homepage: 'https://www.mcm.edu.cn/',
@@ -124,8 +136,34 @@ function stripTags(html: string): string {
     .trim()
 }
 
+/** 中文月份（十月 / 10月）→ 数字；用于学生处这类「月份在标题前」的列表。 */
+function chineseMonth(raw: string): number | null {
+  const digits: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }
+  const text = raw.replace(/\s|月/g, '')
+  if (/^\d{1,2}$/.test(text)) return Number(text)
+  if (text === '十一') return 11
+  if (text === '十二') return 12
+  return digits[text] ?? null
+}
+
+/** 标题前的日期块：<dd class="mm">十月</dd><dd class="dd">28</dd>（无年份，按当前年份推断）。 */
+function parseLeadingDate(context: string): string | null {
+  const match = context.match(
+    /<dd[^>]*class=["'][^"']*\bmm\b[^"']*["'][^>]*>\s*([一二三四五六七八九十]{1,3}|\d{1,2})\s*月?\s*<\/dd>[\s\S]{0,120}?<dd[^>]*class=["'][^"']*\bdd\b[^"']*["'][^>]*>\s*(\d{1,2})\s*<\/dd>/i,
+  )
+  if (!match) return null
+  const month = chineseMonth(match[1])
+  const day = Number(match[2])
+  if (!month || !day) return null
+  const now = new Date()
+  // 列表里出现「比当前月更靠后的月份」通常意味着跨年（12 月看到 1 月 → 去年）
+  const year = month - (now.getMonth() + 1) > 1 ? now.getFullYear() - 1 : now.getFullYear()
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
 /** 从列表页 HTML 里抽「链接 + 标题 + 列表日期」，按 linkPattern 过滤、去重、保序。
- * 温医大等门户的条目是 <li><a href>标题</a><span>2026-10-28</span></li>，列表日期比详情页更可靠。 */
+ * 温医大等门户的条目是 <li><a href>标题</a><span>2026-10-28</span></li>，列表日期比详情页更可靠；
+ * 学生处则把日期放在标题前（<dd>十月</dd><dd>28</dd>），两种都支持。 */
 export function extractListLinks(html: string, source: LiveSource): { url: string; title: string; listDate: string | null }[] {
   const results: { url: string; title: string; listDate: string | null }[] = []
   const seen = new Set<string>()
@@ -143,9 +181,17 @@ export function extractListLinks(html: string, source: LiveSource): { url: strin
     const slash = tail.match(/(\d{1,2})\/(\d{1,2})\s*<\/p>\s*<span>\s*(\d{4})/)
     if (iso) listDate = iso[1]
     else if (slash) listDate = `${slash[3]}-${slash[1]}-${slash[2]}`
-    const url = href.startsWith('http')
-      ? href
-      : `${source.origin.replace(/\/$/, '')}/${href.replace(/^\//, '')}`
+    if (!listDate && match.index >= 0) {
+      const before = html.slice(Math.max(0, match.index - 400), match.index)
+      listDate = parseLeadingDate(before)
+    }
+    // 用标准 URL 解析补全链接：兼容 info/1034/x.htm、../info/1083/x.htm 与绝对地址
+    let url: string
+    try {
+      url = new URL(href, source.listUrl).href
+    } catch {
+      continue
+    }
     if (seen.has(url)) continue
     seen.add(url)
     results.push({ url, title, listDate })
@@ -223,7 +269,8 @@ export function buildLiveItem(
   const publishedTs = parseDateText(publishedIso ?? undefined)
   const deadlineHit = extractDeadline(bodyText, publishedIso)
   const deadlineTs = deadlineHit ? parseDateText(deadlineHit.raw) : null
-  const guess = inferCategory(`${title} ${bodyText.slice(0, 200)}`)
+  // 分类只看标题 + 摘要：整页正文里的「学院/活动/通知」会把行政通知误判成新闻
+  const guess = inferCategory(`${title} ${(metaSummary ?? '').slice(0, 120)}`)
 
   // 摘要：优先 meta description，其次正文第一句有信息量的话（跳过「见附件」「点击」这类）
   const filler = /^(见附件|附件|点击|请|各|为|根据|关于|作者|时间|位置)/

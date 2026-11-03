@@ -761,7 +761,7 @@ export default function App() {
     const result = addItem({
       title: article.title,
       category: article.category,
-      source: `${account?.name ?? '公众号'} · 公众号`,
+      source: `${article.sourceName ?? account?.name ?? '公众号'} · 公众号`,
       sourceType: '公众号订阅',
       summary: article.digest,
       publishedAt: new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(article.publishedAt)),

@@ -34,6 +34,10 @@ export interface AccountArticle {
   officialUrl?: string
   /** 演示全文（按段落）。只有部分示例文章提供，用于展示阅读体验；真实全文需授权后读取。 */
   fullText?: string[]
+  /** 全文来源：demo 是演示数据，rss 是用户订阅源真实抓取（阅读弹窗据此标注）。 */
+  fullTextOrigin?: 'demo' | 'rss'
+  /** 订阅源等非内置账号的来源名，入库时写入 InfoItem.source。 */
+  sourceName?: string
   /** 只有点过“同步更新”后才出现的条目。 */
   incoming?: boolean
 }

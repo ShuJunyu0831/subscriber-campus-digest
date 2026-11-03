@@ -38,8 +38,31 @@ ipcMain.handle('live:fetch', async () => {
   }
 })
 
-function resolveIndex() {
-  return path.join(__dirname, '..', 'dist', 'index.html')
+/**
+ * 用户添加的 RSS / Atom 订阅源：主进程抓取，绕开浏览器跨域限制。
+ * 解析逻辑与浏览器端共用同一份 src/rss.ts（打包进 collector.cjs）。
+ */
+ipcMain.handle('rss:fetch', async (_event, url) => {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url.trim())) {
+    return { ok: false, message: '请填写以 http:// 或 https:// 开头的 RSS 地址', parsed: null }
+  }
+  const collector = loadLiveCollector()
+  if (!collector || typeof collector.fetchFeed !== 'function') {
+    return { ok: false, message: '订阅源解析器未打包（需先运行 npm run collect）', parsed: null }
+  }
+  try {
+    const parsed = await collector.fetchFeed(url.trim())
+    return {
+      ok: parsed.items.length > 0,
+      message: `抓取 ${parsed.items.length} 篇`,
+      parsed: { title: parsed.title ?? null, items: parsed.items },
+    }
+  } catch (error) {
+    return { ok: false, message: error && error.message ? error.message : '抓取失败', parsed: null }
+  }
+})
+
+function resolveIndex() {  return path.join(__dirname, '..', 'dist', 'index.html')
 }
 
 function resolveIcon() {
