@@ -1,0 +1,373 @@
+import { useEffect, useMemo, useState } from 'react'
+import {
+  ArrowUpRight,
+  BellRing,
+  Check,
+  CircleAlert,
+  Clock3,
+  Info,
+  LoaderCircle,
+  MailOpen,
+  Plus,
+  RefreshCw,
+  Rss,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  X,
+} from 'lucide-react'
+import {
+  accountArticles,
+  accountById,
+  formatArticleTime,
+  incomingArticles,
+  officialAccounts,
+  trustWeight,
+  type AccountArticle,
+  type OfficialAccount,
+} from './accounts'
+import { findExistingItem, parseDateText, similarity, type Classification, type LibraryClassification } from './classify'
+import type { InfoItem } from './data'
+import { readPreference, writePreference } from './localStore'
+
+type Relation = 'new' | 'duplicate' | 'update' | 'outdated'
+
+interface FeedEntry {
+  article: AccountArticle
+  account: OfficialAccount
+  mirrors: { article: AccountArticle; account: OfficialAccount }[]
+  relation: Relation
+  existing?: InfoItem
+}
+
+interface AccountFeedProps {
+  /** 已归并后的信息库，用于查重与版本比对 */
+  library: LibraryClassification
+  subscribed: string[]
+  onToggleSubscribe: (accountId: string) => void
+  onImportArticle: (article: AccountArticle, mode: 'new' | 'update') => void
+  notify: (message: string) => void
+}
+
+const READ_KEY = 'subscriber-account-read'
+const SYNC_KEY = 'subscriber-account-synced'
+const CATEGORY_FILTERS = ['全部', '竞赛', '课程通知', '新闻'] as const
+
+function relationOf(article: AccountArticle, library: Classification[]): { relation: Relation; existing?: InfoItem } {
+  const match = findExistingItem(library.map(entry => entry.item), article)
+  if (!match) return { relation: 'new' }
+  const articleDeadline = article.deadlineTs ? Date.parse(article.deadlineTs) : parseDateText(article.deadline)
+  const libraryDeadline = match.item.deadlineTs ? Date.parse(match.item.deadlineTs) : parseDateText(match.item.deadline)
+  let relation: Relation = 'duplicate'
+  if (articleDeadline && libraryDeadline) {
+    if (articleDeadline > libraryDeadline) relation = 'update'
+    else if (articleDeadline < libraryDeadline) relation = 'outdated'
+  }
+  return { relation, existing: match.item }
+}
+
+const RELATION_LABEL: Record<Relation, string> = {
+  new: '未入库',
+  duplicate: '已自动去重',
+  update: '有新版本',
+  outdated: '旧版本',
+}
+
+export default function AccountFeed({ library, subscribed, onToggleSubscribe, onImportArticle, notify }: AccountFeedProps) {
+  const [readIds, setReadIds] = useState<string[]>(() => readPreference<string[]>(READ_KEY, []))
+  const [synced, setSynced] = useState<boolean>(() => readPreference<boolean>(SYNC_KEY, false))
+  const [syncing, setSyncing] = useState(false)
+  const [activeAccount, setActiveAccount] = useState<string>('all')
+  const [filter, setFilter] = useState<(typeof CATEGORY_FILTERS)[number]>('全部')
+  const [unreadOnly, setUnreadOnly] = useState(false)
+  const [query, setQuery] = useState('')
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [managerOpen, setManagerOpen] = useState(false)
+
+  useEffect(() => { writePreference(READ_KEY, readIds) }, [readIds])
+  useEffect(() => { writePreference(SYNC_KEY, synced) }, [synced])
+
+  const articles = useMemo(
+    () => [...(synced ? incomingArticles : []), ...accountArticles],
+    [synced],
+  )
+
+  const subscribedAccounts = useMemo(
+    () => officialAccounts.filter(account => subscribed.includes(account.id)),
+    [subscribed],
+  )
+
+  const visibleArticles = useMemo(() => articles.filter(article => {
+    if (!subscribed.includes(article.accountId)) return false
+    if (activeAccount !== 'all' && article.accountId !== activeAccount) return false
+    if (filter !== '全部' && article.category !== filter) return false
+    if (unreadOnly && readIds.includes(article.id)) return false
+    const keyword = query.trim().toLowerCase()
+    if (keyword && !`${article.title}${article.digest}${article.keywords.join('')}`.toLowerCase().includes(keyword)) return false
+    return true
+  }), [articles, subscribed, activeAccount, filter, unreadOnly, readIds, query])
+
+  /** 同事件 + 同截止时间 → 视为转载重复，只保留可信度最高的来源，其余折叠为 mirrors。 */
+  const libraryEntries = library.visible
+
+  const entries = useMemo<FeedEntry[]>(() => {
+    const clusters: AccountArticle[][] = []
+    for (const article of visibleArticles) {
+      const cluster = clusters.find(group => {
+        const head = group[0]
+        if ((head.deadlineTs ?? '') !== (article.deadlineTs ?? '')) return false
+        if (head.eventKey && article.eventKey) return head.eventKey === article.eventKey
+        return similarity(head.title, article.title) >= 0.92
+      })
+      if (cluster) cluster.push(article)
+      else clusters.push([article])
+    }
+
+    return clusters.map(group => {
+      const sorted = [...group].sort((a, b) => {
+        const accountA = accountById.get(a.accountId)
+        const accountB = accountById.get(b.accountId)
+        return (trustWeight[accountB?.trust ?? 'aggregator'] - trustWeight[accountA?.trust ?? 'aggregator'])
+          // 可信度相同时保留先发布的那条，把后发的“转发”折叠成镜像来源
+          || (Date.parse(a.publishedAt) - Date.parse(b.publishedAt))
+      })
+      const primary = sorted[0]
+      const account = accountById.get(primary.accountId) ?? officialAccounts[0]
+      return {
+        article: primary,
+        account,
+        mirrors: sorted.slice(1).map(article => ({ article, account: accountById.get(article.accountId) ?? officialAccounts[0] })),
+        ...relationOf(primary, libraryEntries),
+      }
+    }).sort((a, b) => Date.parse(b.article.publishedAt) - Date.parse(a.article.publishedAt))
+  }, [visibleArticles, libraryEntries])
+
+  const grouped = useMemo(() => {
+    const groups: { account: OfficialAccount; entries: FeedEntry[] }[] = []
+    for (const entry of entries) {
+      const existing = groups.find(group => group.account.id === entry.account.id)
+      if (existing) existing.entries.push(entry)
+      else groups.push({ account: entry.account, entries: [entry] })
+    }
+    return groups
+  }, [entries])
+
+  const unreadCount = articles.filter(article => subscribed.includes(article.accountId) && !readIds.includes(article.id)).length
+  const duplicates = useMemo(
+    () => entries.reduce((total, entry) => total + entry.mirrors.length, 0),
+    [entries],
+  )
+
+  const markRead = (id: string) => setReadIds(current => current.includes(id) ? current : [...current, id])
+
+  const sync = () => {
+    if (syncing) return
+    if (synced) { notify('已是最新：上次同步后没有新消息'); return }
+    setSyncing(true)
+    window.setTimeout(() => {
+      setSynced(true)
+      setSyncing(false)
+      const fresh = incomingArticles.filter(article => subscribed.includes(article.accountId))
+      notify(`已拉取 ${fresh.length} 条新消息（演示数据，不会访问微信服务器）`)
+    }, 900)
+  }
+
+  const importEntry = (entry: FeedEntry) => {
+    if (entry.relation === 'duplicate' || entry.relation === 'outdated') {
+      notify(entry.relation === 'outdated'
+        ? '这是同一事件的旧版本，信息库中已有更新的截止时间'
+        : '信息库中已有同一内容，已自动去重')
+      return
+    }
+    onImportArticle(entry.article, entry.relation === 'update' ? 'update' : 'new')
+    markRead(entry.article.id)
+  }
+
+  return (
+    <div className="account-page">
+      <section className="account-overview">
+        <div className="account-overview-main">
+          <span className="briefing-label"><Rss size={15} />订阅源</span>
+          <h2>{subscribedAccounts.length} 个公众号，<br />今日 <em>{unreadCount}</em> 条待看。</h2>
+          <p>按账号分组、按条归档；同一篇文章被多个号转载时只留一条，标注其余来源。</p>
+        </div>
+        <div className="account-overview-stats">
+          <div><strong>{articles.filter(article => subscribed.includes(article.accountId)).length}</strong><span>已订阅文章</span></div>
+          <div><strong>{unreadCount}</strong><span>未读</span></div>
+          <div><strong>{duplicates}</strong><span>已去重转载</span></div>
+        </div>
+      </section>
+
+      <div className="account-layout">
+        <aside className="account-rail">
+          <div className="account-rail-head">
+            <h3>我的订阅</h3>
+            <button type="button" className="text-button" onClick={() => setManagerOpen(true)}><Plus size={14} />管理</button>
+          </div>
+          <button type="button" className={`account-pill ${activeAccount === 'all' ? 'active' : ''}`} onClick={() => setActiveAccount('all')}>
+            <span className="account-pill-all"><Rss size={15} /></span>
+            <span className="account-pill-copy"><strong>全部账号</strong><small>{subscribedAccounts.length} 个来源</small></span>
+            <span className="account-pill-count">{articles.filter(article => subscribed.includes(article.accountId) && !readIds.includes(article.id)).length}</span>
+          </button>
+          {subscribedAccounts.map(account => {
+            const accountUnread = articles.filter(article => article.accountId === account.id && !readIds.includes(article.id)).length
+            return (
+              <button type="button" key={account.id} className={`account-pill ${activeAccount === account.id ? 'active' : ''}`} onClick={() => setActiveAccount(account.id)}>
+                <span className="account-avatar" style={{ background: account.accent }}>{account.avatar}</span>
+                <span className="account-pill-copy"><strong>{account.name}</strong><small>{account.trustLabel} · {account.cadence}</small></span>
+                {accountUnread > 0 && <span className="account-pill-count">{accountUnread}</span>}
+              </button>
+            )
+          })}
+          <button type="button" className="account-discover" onClick={() => setManagerOpen(true)}><Plus size={15} />发现更多公众号</button>
+
+          <div className="account-sync-card">
+            <div className="account-sync-line"><RefreshCw size={14} className={syncing ? 'spin' : ''} /><strong>{syncing ? '正在同步…' : synced ? '已同步最新' : '尚未同步'}</strong></div>
+            <p>{synced ? '演示数据已全部载入，包含 2 条新消息。' : '点击右上角同步，模拟拉取订阅号的最新文章。'}</p>
+            <button type="button" className="button secondary" onClick={sync} disabled={syncing}>
+              {syncing ? <><LoaderCircle size={14} className="spin" />同步中</> : <><RefreshCw size={14} />同步更新</>}
+            </button>
+          </div>
+        </aside>
+
+        <div className="account-feed">
+          <div className="feed-toolbar">
+            <div className="feed-filters">
+              {CATEGORY_FILTERS.map(item => (
+                <button type="button" key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>
+                  {item}
+                  {item !== '全部' && <span>{articles.filter(article => subscribed.includes(article.accountId) && article.category === item).length}</span>}
+                </button>
+              ))}
+            </div>
+            <div className="feed-tools">
+              <label className="feed-search"><Search size={14} /><input aria-label="搜索公众号文章" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索标题或关键词" />{query && <button type="button" aria-label="清除搜索" onClick={() => setQuery('')}><X size={12} /></button>}</label>
+              <button type="button" className={`unread-toggle ${unreadOnly ? 'active' : ''}`} aria-pressed={unreadOnly} onClick={() => setUnreadOnly(state => !state)}>
+                <MailOpen size={14} />只看未读
+              </button>
+            </div>
+          </div>
+
+          <p className="feed-note"><ShieldCheck size={13} />演示环境：文章为本地示例数据，不会访问微信服务器；重复转载已按标题与事件指纹自动合并。</p>
+
+          {grouped.length === 0 && (
+            <div className="empty-state account-empty">
+              <span className="empty-icon"><Rss size={24} /></span>
+              <h3>没有符合条件的文章</h3>
+              <p>试试切换分类、关闭“只看未读”，或订阅更多公众号。</p>
+              <button type="button" className="button secondary" onClick={() => { setFilter('全部'); setUnreadOnly(false); setQuery(''); setActiveAccount('all') }}>清除筛选</button>
+            </div>
+          )}
+
+          {grouped.map(group => (
+            <section className="feed-group" key={group.account.id}>
+              <header className="feed-group-head">
+                <span className="account-avatar" style={{ background: group.account.accent }}>{group.account.avatar}</span>
+                <div>
+                  <strong>{group.account.name}</strong>
+                  <small>{group.account.trustLabel} · {group.entries.length} 条</small>
+                </div>
+                <span className={`trust-chip ${group.account.trust}`}>{group.account.trust === 'official' ? '官方' : group.account.trust === 'media' ? '媒体' : '非官方'}</span>
+              </header>
+              <div className="feed-articles">
+                {group.entries.map(entry => {
+                  const read = readIds.includes(entry.article.id)
+                  const open = expanded === entry.article.id
+                  return (
+                    <article key={entry.article.id} className={`feed-article ${read ? 'is-read' : ''} ${open ? 'is-open' : ''}`}>
+                      <span className={`unread-dot ${read ? 'hidden' : ''}`} aria-hidden="true" />
+                      <div className="feed-article-main">
+                        <button type="button" className="feed-title" aria-expanded={open} onClick={() => { markRead(entry.article.id); setExpanded(current => current === entry.article.id ? null : entry.article.id) }}>
+                          <span>{entry.article.title}</span>
+                          {entry.relation === 'update' && <em className="feed-badge update">版本更新</em>}
+                          {entry.relation === 'duplicate' && <em className="feed-badge merged">已去重</em>}
+                          {entry.relation === 'outdated' && <em className="feed-badge outdated">旧版本</em>}
+                        </button>
+                        <p>{entry.article.digest}</p>
+                        <div className="feed-meta">
+                          <span>{formatArticleTime(entry.article.publishedAt)}</span>
+                          <span className="feed-dot" />
+                          <span>{entry.article.readMinutes} 分钟</span>
+                          <span className="feed-dot" />
+                          <span className={`category-tag ${entry.article.category === '竞赛' ? 'competition' : entry.article.category === '新闻' ? 'news' : 'course'}`}>{entry.article.category}</span>
+                          {entry.article.deadline && <span className="feed-deadline"><Clock3 size={12} />{entry.article.deadline} 截止</span>}
+                        </div>
+                        {entry.mirrors.length > 0 && (
+                          <p className="feed-mirrors"><Info size={12} />另有 {entry.mirrors.map(mirror => mirror.account.name).join('、')} 转载同一内容，已合并</p>
+                        )}
+                        {entry.existing && entry.relation !== 'new' && (
+                          <p className={`feed-library-link ${entry.relation}`}>
+                            {entry.relation === 'update' ? <BellRing size={12} /> : entry.relation === 'outdated' ? <CircleAlert size={12} /> : <Check size={12} />}
+                            {entry.relation === 'update'
+                              ? `信息库当前版本截止 ${entry.existing.deadline ?? '待核对'}，可合并为更新版本`
+                              : entry.relation === 'outdated'
+                                ? `信息库中已是更新版本（截止 ${entry.existing.deadline ?? '待核对'}），此条仅留档`
+                                : `信息库中已有《${entry.existing.title}》，无需重复入库`}
+                          </p>
+                        )}
+                        {open && (
+                          <div className="feed-detail">
+                            <div className="feed-keywords">{entry.article.keywords.map(keyword => <span key={keyword}>#{keyword}</span>)}</div>
+                            <div className="feed-detail-actions">
+                              {entry.article.officialUrl && <a href={entry.article.officialUrl} target="_blank" rel="noopener noreferrer">查看原文<ArrowUpRight size={13} /></a>}
+                              <button type="button" className="text-button" onClick={() => setReadIds(current => current.filter(id => id !== entry.article.id))}>标记为未读</button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <div className="feed-article-actions">
+                        <button
+                          type="button"
+                          className={`button ${entry.relation === 'new' ? 'secondary' : entry.relation === 'update' ? 'primary' : 'collected'}`}
+                          disabled={entry.relation === 'duplicate' || entry.relation === 'outdated'}
+                          onClick={() => importEntry(entry)}
+                          title={entry.relation === 'duplicate' ? '信息库中已有同一内容' : entry.relation === 'outdated' ? '信息库中已有更新版本' : undefined}
+                        >
+                          {entry.relation === 'new' ? <><Plus size={14} />入库</> : entry.relation === 'update' ? <><Sparkles size={14} />合并更新</> : <><Check size={14} />已入库</>}
+                        </button>
+                        <span className={`relation-label ${entry.relation}`}>{RELATION_LABEL[entry.relation]}</span>
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      </div>
+
+      {managerOpen && (
+        <div className="modal-backdrop" onMouseDown={() => setManagerOpen(false)}>
+          <section className="modal modal-wide" role="dialog" aria-modal="true" aria-label="公众号订阅管理" onMouseDown={event => event.stopPropagation()}>
+            <div className="modal-header">
+              <div><span className="eyebrow">SUBSCRIPTION MANAGER</span><h2>公众号订阅管理</h2></div>
+              <button type="button" className="icon-button" aria-label="关闭" onClick={() => setManagerOpen(false)}><X size={20} /></button>
+            </div>
+            <div className="modal-body">
+              <div className="search-disclosure"><ShieldCheck size={16} /><span>微信没有开放第三方读取个人订阅号的接口，正式版需要你授权 RSS 或开放平台凭据；此处为演示数据。</span></div>
+              <div className="account-manager-list">
+                {officialAccounts.map(account => {
+                  const active = subscribed.includes(account.id)
+                  return (
+                    <div className={`account-manager-row ${active ? 'active' : ''}`} key={account.id}>
+                      <span className="account-avatar" style={{ background: account.accent }}>{account.avatar}</span>
+                      <div className="account-manager-copy">
+                        <div><strong>{account.name}</strong><span className={`trust-chip ${account.trust}`}>{account.trustLabel}</span></div>
+                        <p>{account.description}</p>
+                        <small>{account.subscribers} 关注 · {account.cadence} · {account.topics.join(' / ')}</small>
+                      </div>
+                      <button type="button" className={`button ${active ? 'collected' : 'secondary'}`} onClick={() => onToggleSubscribe(account.id)} aria-pressed={active}>
+                        {active ? <><Check size={14} />已订阅</> : <><Plus size={14} />订阅</>}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+            <div className="modal-actions"><span className="ai-note"><Info size={14} />取消订阅不会删除已入库的信息</span><button className="button primary" onClick={() => setManagerOpen(false)}>完成</button></div>
+          </section>
+        </div>
+      )}
+    </div>
+  )
+}

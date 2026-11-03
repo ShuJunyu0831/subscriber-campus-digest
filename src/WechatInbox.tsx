@@ -4,6 +4,7 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  Cpu,
   Eye,
   HardDrive,
   Info,
@@ -11,13 +12,17 @@ import {
   Lock,
   MessagesSquare,
   Plus,
+  Rss,
   Share2,
   ShieldCheck,
   Sparkles,
   Trash2,
   X,
 } from 'lucide-react'
-import { type Category } from './data'
+import { type AddItemResult, type NewItemInput } from './data'
+import { inferCategory, type LibraryClassification } from './classify'
+import { officialAccounts, type AccountArticle } from './accounts'
+import AccountFeed from './AccountFeed'
 import SplitText from './SplitText'
 import {
   clearLocalMessages,
@@ -25,7 +30,9 @@ import {
   deleteLocalMessage,
   listLocalMessages,
   readPendingShare,
+  readPreference,
   saveLocalMessage,
+  writePreference,
   type LocalWechatMessage,
 } from './localStore'
 
@@ -37,9 +44,14 @@ interface EditableDraft {
 }
 
 interface WechatInboxProps {
-  addItem: (title: string, category: Category, source: string) => boolean
+  addItem: (input: NewItemInput) => AddItemResult
   notify: (message: string) => void
+  modelName: string
+  library: LibraryClassification
+  onImportArticle: (article: AccountArticle, mode: 'new' | 'update') => void
 }
+
+const SUBSCRIPTION_KEY = 'subscriber-account-subs'
 
 const formatTime = (timestamp: number) => new Intl.DateTimeFormat('zh-CN', {
   month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -49,12 +61,6 @@ const redactText = (text: string) => text
   .replace(/1[3-9]\d{9}/g, '[手机号已隐藏]')
   .replace(/\b\d{17}[\dXx]\b/g, '[证件号已隐藏]')
   .replace(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/g, '[邮箱已隐藏]')
-
-const inferCategory = (text: string): Category => {
-  if (/竞赛|比赛|报名|参赛|选拔/.test(text)) return '竞赛'
-  if (/课程|调课|上课|讲座|考试|作业/.test(text)) return '课程通知'
-  return '新闻'
-}
 
 function InlineModal({ title, eyebrow, children, onClose, wide = false }: {
   title: string
@@ -76,9 +82,14 @@ function InlineModal({ title, eyebrow, children, onClose, wide = false }: {
   )
 }
 
-export default function WechatInbox({ addItem, notify }: WechatInboxProps) {
+export default function WechatInbox({ addItem, notify, modelName, library, onImportArticle }: WechatInboxProps) {
   const isDesktopShell = Boolean(window.subscriberDesktop?.isDesktop)
 
+  const [tab, setTab] = useState<'share' | 'accounts'>('share')
+  const [subscribed, setSubscribed] = useState<string[]>(() => readPreference<string[]>(
+    SUBSCRIPTION_KEY,
+    officialAccounts.filter(account => account.defaultSubscribed).map(account => account.id),
+  ))
   const [messages, setMessages] = useState<LocalWechatMessage[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<string[]>([])
@@ -91,6 +102,14 @@ export default function WechatInbox({ addItem, notify }: WechatInboxProps) {
   const [confirmClear, setConfirmClear] = useState(false)
   const [rulesOpen, setRulesOpen] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => { writePreference(SUBSCRIPTION_KEY, subscribed) }, [subscribed])
+
+  const toggleSubscribe = (accountId: string) => {
+    const active = subscribed.includes(accountId)
+    setSubscribed(current => active ? current.filter(id => id !== accountId) : [...current, accountId])
+    notify(active ? '已取消订阅，已入库的信息会保留' : '已订阅，可在公众号标签查看')
+  }
 
   useEffect(() => {
     let active = true
@@ -204,16 +223,21 @@ export default function WechatInbox({ addItem, notify }: WechatInboxProps) {
     timer.current = setTimeout(() => {
       const combined = selectedMessages.map(message => message.content).join('\n')
       const firstLine = combined.split(/[\n。！？]/).find(Boolean)?.trim() || '微信群分享摘要'
-      const category = inferCategory(combined)
-      const added = addItem(
-        firstLine.slice(0, 40),
-        category,
-        `${selectedMessages[0].groupName} · 按需分析`,
-      )
+      const guess = inferCategory(combined)
+      const result = addItem({
+        title: firstLine.slice(0, 40),
+        category: guess.category,
+        source: `${selectedMessages[0].groupName} · 按需分析`,
+        sourceType: '用户导入',
+        summary: combined.replace(/\s+/g, ' ').slice(0, 96),
+        evidence: combined.slice(0, 240),
+        tags: guess.matched.length > 0 ? guess.matched : [guess.category, '微信群'],
+        deadline: guess.category === '竞赛' ? '日期待核对' : undefined,
+      })
       setAnalyzing(false)
       setAnalysisOpen(false)
-      if (added) {
-        notify('已生成模拟分析结果；正式版此时才会上传你确认的文本')
+      if (result.ok) {
+        notify(`已按「${guess.category}」归类（置信度 ${guess.confidence}%）；正式版此时才会上传你确认的文本`)
         setSelected([])
       }
     }, 1100)
@@ -222,9 +246,28 @@ export default function WechatInbox({ addItem, notify }: WechatInboxProps) {
   return (
     <div className="wechat-page">
       <section className="page-heading wechat-heading">
-        <div><span className="eyebrow">LOCAL-FIRST WECHAT INBOX</span><SplitText tag="h1" text="微信消息" effect="rise" splitType="chars" delay={58} duration={0.8} staggerFrom="start" trigger="load" textAlign="left" className="split-heading" /><p>你不必把整群消息交出去。只分享需要整理的片段，先留在本机。</p></div>
-        <div className="wechat-heading-actions"><span className="local-only-chip"><HardDrive size={14} />仅本机</span><button className="button primary" onClick={openBlankDraft}><Plus size={17} />导入分享</button></div>
+        <div>
+          <span className="eyebrow">{tab === 'share' ? 'LOCAL-FIRST WECHAT INBOX' : 'OFFICIAL ACCOUNTS · DEMO FEED'}</span>
+          <SplitText tag="h1" text="微信消息" effect="rise" splitType="chars" delay={58} duration={0.8} staggerFrom="start" trigger="load" textAlign="left" className="split-heading" />
+          <p>{tab === 'share' ? '你不必把整群消息交出去。只分享需要整理的片段，先留在本机。' : '订阅的公众号文章按账号、分类与版本摊平，一条一条看清。'}</p>
+        </div>
+        <div className="wechat-heading-actions">
+          {tab === 'share'
+            ? <><span className="local-only-chip"><HardDrive size={14} />仅本机</span><button className="button primary" onClick={openBlankDraft}><Plus size={17} />导入分享</button></>
+            : <span className="local-only-chip"><Rss size={14} />{subscribed.length} 个订阅</span>}
+        </div>
       </section>
+
+      <div className="wechat-tabs" role="tablist" aria-label="微信信息来源">
+        <button type="button" role="tab" aria-selected={tab === 'share'} className={tab === 'share' ? 'active' : ''} onClick={() => setTab('share')}>
+          <MessagesSquare size={16} />微信群分享<span>{messages.length}</span>
+        </button>
+        <button type="button" role="tab" aria-selected={tab === 'accounts'} className={tab === 'accounts' ? 'active' : ''} onClick={() => setTab('accounts')}>
+          <Rss size={16} />公众号订阅<span>{subscribed.length}</span>
+        </button>
+      </div>
+
+      {tab === 'share' && <>
 
       <section className="share-privacy-hero">
         <div className="share-privacy-copy">
@@ -300,6 +343,16 @@ export default function WechatInbox({ addItem, notify }: WechatInboxProps) {
         <button className="button secondary" onClick={() => setRulesOpen(true)}>查看规则<ArrowUpRight size={15} /></button>
       </section>
 
+      </>}
+
+      {tab === 'accounts' && <AccountFeed
+        library={library}
+        subscribed={subscribed}
+        onToggleSubscribe={toggleSubscribe}
+        onImportArticle={onImportArticle}
+        notify={notify}
+      />}
+
       {draft && <InlineModal title="导入微信分享" eyebrow={draft.source === 'demo' ? 'DEMO SHARE · 演示数据' : 'SHARED FROM WECHAT'} onClose={closeDraft}>
         <div className="modal-body">
           <div className="local-save-notice"><HardDrive size={18} /><p><strong>这一步只会保存到本机</strong><span>不会上传云端，也不会自动调用 AI 分析。</span></p></div>
@@ -314,9 +367,9 @@ export default function WechatInbox({ addItem, notify }: WechatInboxProps) {
       {analysisOpen && <InlineModal title="确认发送给 AI" eyebrow="EXPLICIT CLOUD CONSENT" onClose={() => !analyzing && setAnalysisOpen(false)} wide>
         <div className="modal-body">
           <div className="outbound-warning"><Info size={18} /><p><strong>以下文本将离开本机</strong><span>当前为原型演示，不会真实上传。正式版只会发送你在这个窗口中确认的内容。</span></p></div>
-          <div className="outbound-scope"><div><span>来源</span><strong>{selectedMessages.length} 条微信消息</strong></div><div><span>隐私清理</span><strong>{hiddenCount > 0 ? `已隐藏 ${selectedMessages.length} 条消息中的敏感片段` : '未发现手机号、证件号或邮箱'}</strong></div></div>
+          <div className="outbound-scope"><div><span>来源</span><strong>{selectedMessages.length} 条微信消息</strong></div><div><span>隐私清理</span><strong>{hiddenCount > 0 ? `已隐藏 ${selectedMessages.length} 条消息中的敏感片段` : '未发现手机号、证件号或邮箱'}</strong></div><div><span>分析模型</span><strong><Cpu size={12} />{modelName} · 演示</strong></div></div>
           <div className="outbound-preview"><div className="outbound-preview-title"><Eye size={15} />将发送的内容</div><pre>{redactedOutboundText}</pre></div>
-          <label className="consent-checkbox"><input type="checkbox" checked={analysisConsent} onChange={event => setAnalysisConsent(event.target.checked)} /><span><strong>我确认将上述内容发送给云端模型进行分析</strong><small>每次分析都需要重新确认，不会记住本次授权。</small></span></label>
+          <label className="consent-checkbox"><input type="checkbox" checked={analysisConsent} onChange={event => setAnalysisConsent(event.target.checked)} /><span><strong>我确认将上述内容发送给 {modelName} 进行分析</strong><small>每次分析都需要重新确认，不会记住本次授权。</small></span></label>
         </div>
         <div className="modal-actions"><button className="button secondary" onClick={() => setAnalysisOpen(false)} disabled={analyzing}>取消</button><button className="button primary" onClick={analyze} disabled={!analysisConsent || analyzing}>{analyzing ? <><LoaderCircle className="spin" size={16} />正在模拟分析</> : <><Sparkles size={16} />确认并分析</>}</button></div>
       </InlineModal>}

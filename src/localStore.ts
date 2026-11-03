@@ -134,3 +134,25 @@ export async function clearLocalMessages(): Promise<void> {
     }
   })
 }
+
+/**
+ * 轻量偏好存储（订阅状态、已读标记、模型选择）。
+ * 这类数据只在当前设备有用，用 localStorage 比再开一个 IndexedDB 更省事。
+ */
+export function readPreference<T>(key: string, fallback: T): T {
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (!raw) return fallback
+    return JSON.parse(raw) as T
+  } catch {
+    return fallback
+  }
+}
+
+export function writePreference(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // 隐私模式或配额用尽时静默失败，不影响主流程
+  }
+}

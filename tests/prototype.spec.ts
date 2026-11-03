@@ -142,3 +142,117 @@ test('390px 移动端无横向溢出且导航可用', async ({ page }) => {
   await page.locator('.mobile-nav').getByRole('button', { name: /信息库/ }).click()
   await expect(page.getByRole('heading', { name: '全部信息', exact: true })).toBeVisible()
 })
+
+test('同一事件的多版本自动归并且只保留最新结论', async ({ page }) => {
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  const first = page.locator('.library-list .info-card').first()
+  await expect(first.locator('.version-chip')).toHaveText('V2')
+  await expect(page.locator('.insight-chip')).toContainText('已自动合并 2 条')
+  // 原文与转载只出现一次
+  await expect(page.locator('.library-list .card-main h3').filter({ hasText: '数学建模' })).toHaveCount(1)
+
+  await page.locator('.insight-chip').click()
+  const modal = page.getByRole('dialog', { name: '分类与版本规则' })
+  await expect(modal).toBeVisible()
+  await expect(modal.locator('.taxonomy-group')).toHaveCount(1)
+  await expect(modal.locator('.taxonomy-group')).toContainText('V1')
+  await expect(modal.locator('.taxonomy-group')).toContainText('V2')
+  await modal.getByRole('button', { name: '知道了' }).click()
+
+  await first.locator('.card-main').click()
+  const drawer = page.getByRole('dialog', { name: '信息详情' })
+  await expect(drawer.locator('.version-timeline li')).toHaveCount(2)
+  await expect(drawer.locator('.version-timeline')).toContainText('已被后续版本取代')
+  await expect(drawer.locator('.version-timeline')).toContainText('当前版本')
+  await expect(drawer.locator('.classify-facts')).toContainText('已自动合并 1 条重复')
+})
+
+test('公众号订阅按账号分组、自动去重并可把新版本并入信息库', async ({ page }) => {
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /微信消息/ }).click()
+  await page.getByRole('tab', { name: /公众号订阅/ }).click()
+
+  await expect(page.locator('.feed-group')).toHaveCount(3)
+  await expect(page.locator('.feed-article')).toHaveCount(8)
+  await expect(page.locator('.account-overview')).toContainText('已去重转载')
+  await expect(page.locator('.feed-group-head').filter({ hasText: '竞赛君' })).toHaveCount(0)
+
+  // 订阅管理：把未订阅的聚合号加进来
+  await page.getByRole('button', { name: '管理', exact: true }).click()
+  const manager = page.getByRole('dialog', { name: '公众号订阅管理' })
+  await expect(manager.locator('.account-manager-row')).toHaveCount(5)
+  await manager.locator('.account-manager-row').filter({ hasText: '竞赛君' }).getByRole('button', { name: '订阅', exact: true }).click()
+  await manager.getByRole('button', { name: '完成', exact: true }).click()
+  await expect(page.locator('.feed-group-head').filter({ hasText: '竞赛君' })).toHaveCount(1)
+  const beforeSync = await page.locator('.feed-article').count()
+
+  // 同步更新：模拟拉取到 2 条新消息
+  await page.getByRole('button', { name: '同步更新' }).click()
+  await expect(page.locator('.feed-article')).toHaveCount(beforeSync + 2)
+  await expect(page.getByText('已同步最新')).toBeVisible()
+
+  // 再次延期的那篇文章以“版本更新”出现，合并后信息库变为 V3
+  const updateRow = page.locator('.feed-article').filter({ hasText: '再次延期' })
+  await expect(updateRow.locator('.feed-badge')).toContainText('版本更新')
+  await updateRow.getByRole('button', { name: /合并更新/ }).click()
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  const first = page.locator('.library-list .info-card').first()
+  await expect(first.locator('.version-chip')).toHaveText('V3')
+  await expect(first.locator('.card-extras')).toContainText('V3 · 已合并 3 个版本')
+})
+
+test('赛事卡片提供官网一键入口，缺失时标注待核对', async ({ page }) => {
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  const first = page.locator('.library-list .info-card').first()
+  const official = first.locator('.official-link')
+  await expect(official).toBeVisible()
+  await expect(official).toHaveAttribute('href', 'https://www.mcm.edu.cn/')
+  await expect(official).toHaveAttribute('target', '_blank')
+
+  const aiCard = page.locator('.library-list .info-card').filter({ hasText: '人工智能创新应用竞赛' })
+  await expect(aiCard.locator('.official-missing')).toContainText('官网待核对')
+})
+
+test('右下角可切换国内大模型并记住选择', async ({ page }) => {
+  await openHome(page)
+  await page.locator('.llm-trigger').click()
+  const panel = page.getByRole('dialog', { name: '选择分析模型' })
+  await expect(panel).toBeVisible()
+  await expect(panel.locator('.llm-option')).toHaveCount(11)
+  await expect(panel).toContainText('通义千问')
+  await expect(panel).toContainText('Kimi')
+  await expect(panel).toContainText('文心一言')
+
+  await panel.getByRole('button', { name: /Kimi K2/ }).click()
+  await expect(page.locator('.llm-trigger')).toContainText('Kimi K2')
+
+  await page.reload()
+  const digest = page.getByRole('dialog', { name: '今天，值得关注这些' })
+  if (await digest.isVisible()) {
+    await digest.getByRole('button', { name: '开始浏览' }).click()
+    await expect(digest).toBeHidden()
+  }
+  await expect(page.locator('.llm-trigger')).toContainText('Kimi K2')
+
+  // 微信分析的确认弹窗引用当前选择的模型
+  await page.locator('.main-nav').getByRole('button', { name: /微信消息/ }).click()
+  await page.getByRole('button', { name: '载入演示分享' }).click()
+  await page.getByRole('button', { name: '仅保存到本机' }).click()
+  await page.getByRole('button', { name: '选择2026 软件创新竞赛通知群' }).click()
+  await page.getByRole('button', { name: '用 AI 分析' }).click()
+  const consent = page.getByRole('dialog', { name: '确认发送给 AI' })
+  await expect(consent).toContainText('Kimi K2')
+  await expect(consent.locator('.outbound-preview')).toContainText('手机号已隐藏')
+})
+
+test('390px 移动端公众号订阅页无横向溢出', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await openHome(page)
+  await page.locator('.mobile-nav').getByRole('button', { name: /微信消息/ }).click()
+  await page.getByRole('tab', { name: /公众号订阅/ }).click()
+  await expect(page.locator('.account-overview')).toBeVisible()
+  await expect(page.locator('.feed-article').first()).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})

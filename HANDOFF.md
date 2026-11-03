@@ -7,9 +7,11 @@
 
 ## 一、一句话现状
 
-Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码已推到 GitHub 私有仓库，
-两端测试全绿（Web 7 组 Playwright、桌面 13 项端到端检查）。**未完成的是真实数据链路**——
-现在所有条目都来自演示数据，云端分析能力还没接。
+Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 GitHub 私有仓库，
+`npm test` **12 组 Playwright 全绿**、`npm run build` 通过。
+
+本轮（11-03）补齐了四件事：**信息分类/版本/去重引擎、公众号订阅、赛事官网一键入口、右下角模型选择**。
+仍然没做的是真实数据链路 —— 信息库条目、公众号文章、模型调用全部是演示数据。
 
 ---
 
@@ -20,7 +22,7 @@ Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码已�
 ```bash
 npm install
 npm run dev              # 开发：http://127.0.0.1:5173
-npm test                 # Web 端 7 组 Playwright（约 50 秒）
+npm test                 # Web 端 12 组 Playwright（约 35 秒）
 npm run build            # 类型检查 + 生产构建
 
 npm run desktop          # 直接以 Electron 运行
@@ -28,14 +30,23 @@ npm run desktop:portable # 重新打免安装包 → desktop-dist/Subscriber
 npm run desktop:verify   # 拉起打包后的 exe 跑 13 项检查
 ```
 
+演示时可以按这条路径走一遍（能一次看完四个新功能）：
+
+1. 打开「全部信息」：首张卡片带 **V2** 徽标与「赛事官网」入口，工具条右侧显示「已自动合并 2 条 · 1 组版本」。
+2. 点「分类规则」：看版本组 V1 → V2、去重阈值与分类依据。
+3. 点首张卡片：详情抽屉里有版本时间线、分类与去重说明、底部官网按钮。
+4. 进「微信消息 → 公众号订阅」：账号分组、按条列出，第一条带「版本更新」。
+5. 点「同步更新」→ 出现 2 条新消息 → 点「合并更新」→ 回到信息库，首张卡片变为 **V3**。
+6. 点右下角模型胶囊：切换 Kimi / 通义千问等，选择会被记住，微信分析的确认弹窗会引用当前模型。
+
 ---
 
 ## 三、交付物在哪
 
 | 产物 | 路径 | 说明 |
 | --- | --- | --- |
-| 免安装包压缩件 | `desktop-dist/Subscriber-0.1.0-win-x64.zip` | 152 MB，解压双击即用 |
-| 主程序 | `desktop-dist/Subscriber/Subscriber.exe` | 239 MB |
+| 免安装包压缩件 | `desktop-dist/Subscriber-0.1.0-win-x64.zip` | 解压双击即用 |
+| 主程序 | `desktop-dist/Subscriber/Subscriber.exe` | `npm run desktop:portable` 生成 |
 | 使用说明 | `desktop-dist/Subscriber/使用说明.txt` | 打包时自动生成 |
 | 源码仓库 | https://github.com/ShuJunyu0831/subscriber-campus-digest | 私有，分支 `main` |
 | 运行截图 | `shots/desktop-0*.png` | 5 个页面各一张（已 gitignore） |
@@ -45,21 +56,49 @@ npm run desktop:verify   # 拉起打包后的 exe 跑 13 项检查
 ## 四、已经做完的事
 
 **Web 界面**
-- 布局从「左侧边栏 + 卡片内画布」重构为「顶部 sticky 导航 + 全屏 ASCII 背景 + 居中玻璃内容层」。
-- 首屏弹出今日摘要弹框，带分层错峰弹出动画（封面 → 导语 → 列表逐条 → 底部按钮）。
-- 四个页面的 h1 接入 SplitText 逐字入场（今日精选、信息库、微信消息、完成回顾）。
-- 修掉改版引入的对比度问题：白色副标题覆盖深色、分享提示落在 ASCII 背景上几乎不可见等。
+- 顶部 sticky 导航 + 全屏 ASCII 背景 + 居中玻璃内容层。
+- 首屏今日摘要弹框，分层错峰弹出；四个页面 h1 接入 SplitText 逐字入场。
+- 修掉改版引入的对比度问题（白色副标题、分享提示落在背景上不可见等）。
 
 **桌面版**
 - Electron 45，`contextIsolation + sandbox`，`file://` 加载，单实例锁，外链交给系统浏览器。
-- 自定义打包脚本绕开 electron-builder 在本机的目录重命名失败。
-- 应用图标（7 个尺寸）与版本信息已写入 exe，`app.getName()` 为 `Subscriber`，
-  用户数据在 `%APPDATA%\Subscriber`。
-- 桌面版没有系统分享面板，微信消息页文案已改为「复制 → 粘贴导入」。
+- 自定义打包脚本绕开 electron-builder 在本机的目录重命名失败；图标与版本信息写入 exe。
 
-**仓库**
-- 34 个文件 / 1.3 MB，排除 `node_modules`、`dist`、`release`、`desktop-dist` 等（否则超 1 GB）。
-- 补了 `README.md`、`.gitignore`、`.gitattributes`（统一 LF）。
+**2026-11-03 本轮新增**
+
+1. **分类引擎 `src/classify.ts`（纯函数，无网络依赖）**
+   - 标题规范化（全角转半角、去标点）→ 剔除「关于/通知/延期/更正…」得到**事件指纹**。
+   - 字符二元组 Dice 相似度：同一事件阈值 `0.74`，重复来源阈值 `0.92`。
+   - 聚类：`eventKey` 相同即同一事件，否则按标题相似度；同一事件只展示一条最新结论。
+   - **版本识别**：按发布时间升序，截止时间变化或出现「更正/修正/补充/变更/调整/取消/恢复/重新」→ 版本 +1；
+     「延期/延长/推迟」必须**同时**有截止时间变化才算新版本，否则视为同一版本的转述（挡掉聚合号转发造成的假版本）。
+   - **去重**：同一版本内多条来源自动合并，优先保留官方来源（`聚合/转载/搬运/非官方` 降权，`官方/教务处/校团委/学院/新闻网` 加权）。
+   - 分类打分：关键词加权给出类型、置信度与命中词；时效状态 `active / expiring / expired / unconfirmed`。
+   - 演示数据里预置了这件事的完整示例：id 1（10-30 原文，截止 11-03）→ id 9（11-02 延期到 11-10，V2）→ id 10（同版本转载，被合并）。
+
+2. **公众号订阅**
+   - 「微信消息」页拆成两个标签：微信群分享 / 公众号订阅（保留原有本机优先逻辑）。
+   - 5 个演示账号（学校官方、学院、官方媒体、赛事组委会、非官方聚合），12 篇文章；订阅状态存 localStorage。
+   - 按账号分组 + 分类筛选 + 只看未读 + 关键词搜索；文章行展示分类、截止时间、关键词、转载来源。
+   - 与信息库查重：未入库 / 已去重 / 有新版本 / 旧版本 四种关系，新版本可「合并更新」追加为下一个版本。
+   - 「同步更新」模拟拉取 2 条新消息；公众号文章之间也按 `eventKey + 截止时间` 合并转载。
+
+3. **赛事官网入口**
+   - `InfoItem.officialUrl`；卡片底部新增 `.card-extras` 条，提供「赛事官网 ↗」一键跳转（`target=_blank`，Electron 下交给系统浏览器）。
+   - 已核实并写入：数学建模 `mcm.edu.cn`、挑战杯 `tiaozhanbei.net`、外研社 `uchallenge.unipus.cn`。
+   - 人工智能创新应用竞赛属于虚构赛事，没有官网 → 显示「官网待核对」，详情页按钮禁用。
+   - 详情抽屉底部同样给官网按钮，与「查看原文」并列。
+
+4. **右下角模型选择**
+   - `src/llmModels.ts` 收录 11 个国内常见模型（DeepSeek V3.2 / R1、通义千问 Qwen3-Max / Qwen3-Coder、豆包、Kimi K2、GLM-4.6、文心 5.0、混元 T1、MiniMax M2、星火 X1）。
+   - 固定右下角胶囊 → 按厂商分组的面板，键盘 Esc / 点击外部关闭，选择存 localStorage。
+   - 当前模型会出现在：导入弹框底部、今日摘要「摘要由 X 生成」、微信「确认发送给 AI」弹窗。**不发起任何真实请求。**
+
+5. **界面配套**
+   - 信息库工具条新增归并概览与「分类规则」入口；`TaxonomyModal` 展示四个分类维度、阈值与版本组。
+   - 导入弹框会实时给出「分类引擎建议：竞赛 · 置信度 89%（命中…）」，可一键采用。
+   - 卡片显示版本徽标、时效状态、重复合并数；截止时间改为按当前时间实时计算（今天截止 / N 天后截止 / 已截止）。
+   - 移动端（≤560px）工具条换行、信息流改为两列堆叠，390px 无横向溢出。
 
 ---
 
@@ -67,69 +106,78 @@ npm run desktop:verify   # 拉起打包后的 exe 跑 13 项检查
 
 ```
 src/
-  App.tsx             主界面：顶栏、内容层、5 个页面、摘要弹框（ModalShell）
-  GradientASCII.tsx   全屏 WebGL2 多 Pass ASCII 背景（field/glyph/halo/blur/composite）
-  GradientASCII.css
-  SplitText.tsx       逐字动画标题（移植 React Bits，含 reduced-motion 降级）
-  WechatInbox.tsx     微信消息本机优先导入（系统分享 / 粘贴）
-  localStore.ts       IndexedDB 本地存储（分享收件箱等）
-  data.ts             全部演示数据 —— 接真实数据源时从这里替换
-  main.tsx            入口，file:// 下跳过 Service Worker 注册
-  index.css           全部样式（含 .digest-modal 弹出动画、.app-veil 遮罩）
-electron/
-  main.cjs            主进程：窗口、导航拦截、外链处理
-  preload.cjs         contextBridge 暴露 subscriberDesktop
-  launch.cjs          清 ELECTRON_RUN_AS_NODE 后拉起 Electron
-  build-portable.cjs  免安装包组装（复制运行时 + asar + 改名 + 写图标）
-  make-icon.cjs       png → 7 尺寸 ico（pngjs 面积平均下采样）
-  patch-exe.cjs       用 resedit 写图标与版本信息
-  verify-package.mjs  13 项端到端验证
-tests/prototype.spec.ts   7 组 Playwright 用例
+  App.tsx             主界面：顶栏、内容层、5 个页面、摘要弹框、卡片与详情抽屉
+  classify.ts         分类引擎（指纹/相似度/聚类/版本/去重/时效/分类打分）
+  accounts.ts         公众号与文章演示数据、可信度等级
+  AccountFeed.tsx     公众号订阅页（分组、筛选、同步、查重、入库）
+  TaxonomyModal.tsx   分类规则与版本记录说明
+  LlmPicker.tsx       右下角模型选择面板
+  llmModels.ts        国内常见模型清单（仅展示元数据）
+  GradientASCII.tsx   全屏 WebGL2 多 Pass ASCII 背景
+  SplitText.tsx       逐字动画标题
+  WechatInbox.tsx     微信消息：本机导入 + 公众号订阅标签
+  localStore.ts       IndexedDB 本地存储 + `readPreference/writePreference`
+  data.ts             演示数据、InfoItem / NewItemInput / AddItemResult 类型
+  index.css           全部样式（新功能样式集中在文件末尾）
+electron/             主进程、打包、图标、验证脚本
+tests/prototype.spec.ts   12 组 Playwright 用例
 ```
 
 ---
 
 ## 六、不要随便改的决定
 
-这些是产品/技术上的既定选择，改动前先确认：
+产品/隐私侧：
 
-1. **不读取个人微信群。** 微信消息只能由用户主动分享或粘贴，先落 IndexedDB，本机预览后再**按次确认**是否上云。
+1. **不读取个人微信群。** 只能由用户主动分享或粘贴，先落 IndexedDB，本机预览后再按次确认是否上云。
 2. **不做自动读取无权限的内容。** 公开检索只访问允许使用的公开网页，并保留来源证据。
 3. **完成回顾由用户手动勾选**，系统不自动判定、不虚构成就。
 4. **原始文件默认留在本地**，仅在用户主动解析时按需上传，并有明确删除规则。
 5. **每份摘要只给一份**，不做信息流无限刷新。
 6. 预算目标：每月 200 元以内，需要用户额度与处理频率控制。
 7. 首版文件范围：文字、Word、PDF、图片、普通 PPT。扫描件增强、超大 PPT、视频后置。
+8. **公众号仍为演示数据。** 微信没有面向第三方应用的订阅号读取接口，正式版需要用户授权的 RSS / 开放平台凭据；不要写成「已接入微信」。
+9. **模型选择器不发请求。** 只是界面标签，任何真实调用都要单独做密钥管理、计费提示与失败兜底。
+10. **官网只放能核实的入口。** 拿不准就留空显示「官网待核对」，不要编造链接。
 
 技术侧：
 
-- 背景画布的 `speed`、`density` 等参数在 `App.tsx` 里调，`dpr={1}` 是刻意的（全屏 WebGL 会把测试拖慢到超时）。
-- Playwright 配置了 `reducedMotion: 'reduce'`，让背景只渲染静态帧——别删，删了 7 组用例会超时。
+- 分类阈值为 `0.74 / 0.92`（`classify.ts` 顶部）。改了会影响卡片合并数量与测试断言
+  （「已自动合并 2 条」「V2」「V3 · 已合并 3 个版本」），改完要同步 `tests/prototype.spec.ts`。
+- 版本判定顺序：**先看截止时间是否变化，再看是否含非日期变更词**。不要把「延期」单独当作新版本条件。
+- 同一版本的代表条目优先官方来源；判断依据是 `source` 文本里的「官方/教务处/学院」与「聚合/转载」。
+- 背景画布的 `speed`、`density` 在 `App.tsx` 调，`dpr={1}` 是刻意的（全屏 WebGL 会把测试拖慢到超时）。
+- Playwright 配置了 `reducedMotion: 'reduce'`，别删，删了用例会超时。
 - `vite.config.ts` 的 `base: './'` 是桌面版 `file://` 加载必需的。
+- 卡片结构是 `grid`（card-main / card-actions / card-extras 跨列），官网链接必须放在 `.card-extras`，
+  不要再塞回 `.card-main`（它是 `<button>`，不能嵌套 `<a>`）。
 
 ---
 
 ## 七、待办（按优先级）
 
-**P0 — 接真实数据链路**（这是原型最核心的缺口）
-- 现状：`src/data.ts` 里全是写死的演示条目，`declinedByUser` 状态的云服务授权导致「上传 → 分析」是模拟的。
-- 下一步：重新走一次云服务开通授权（需要用户在 WorkBuddy 里点同意），然后把 `localStore.ts` 的上传与分析替换成真实调用。
-- 首次要验证的就是「竞赛截止提醒」这一条链路。
+**P0 — 接真实数据链路**
+- 现状：`src/data.ts` 与 `src/accounts.ts` 都是演示数据，「上传 → 分析」是模拟的。
+- 下一步：重新走云服务开通授权，把 `localStore.ts` 的上传与分析换成真实调用。
+- 首次要验证的仍是「竞赛截止提醒」链路；分类引擎可以直接复用，不必依赖模型。
 
-**P1 — 订阅源接入**
-- 尚无真实抓取：竞赛官网、校园新闻、课程通知都还没有 source adapter。
-- 建议先做 2–3 所学校的固定页面，验证解析稳定性，再谈覆盖面。
+**P1 — 真实订阅源**
+- 公众号：接入已授权的 RSS / 开放平台，替换 `accountArticles`，保留 `eventKey` 字段即可复用现有去重与版本逻辑。
+- 竞赛官网：先做 2—3 所学校的固定页面适配器，验证解析稳定性，再谈覆盖面。
 
-**P2 — 安装包与签名**
-- NSIS 安装包出不来：electron-builder 要先把 Electron 解压到 `win-unpacked.tmp` 再重命名大目录，本机报 `EPERM`。
-  换一台没装文件钩子的机器可直接跑 `npm run desktop:build`。
-- 改动 PE 资源后 Electron 原签名失效，`Subscriber.exe` 会触发 SmartScreen 提示。
-  要发给别人用，需要自购代码签名证书。
+**P2 — 模型真实路由**
+- `llmModels.ts` 的 id 映射到各厂商模型名；按模型能力（长文本/推理）分配任务。
+- 需要额度控制、超时重试、隐私提示（微信文本上云前仍需逐次确认）。
 
-**P3 — 体验补完**
-- 完成回顾还没有跨周/跨月视图。
-- 收藏页没有分类与搜索。
-- 没有 GitHub Actions；可以把 `npm test` 挂上去做 CI。
+**P3 — 安装包与签名**
+- NSIS 安装包在本机仍可能因目录重命名 `EPERM` 失败；换干净机器可直接跑 `npm run desktop:build`。
+- 改动 PE 资源后 Electron 原签名失效，`Subscriber.exe` 会触发 SmartScreen；对外分发需自购代码签名证书。
+
+**P4 — 体验补完**
+- 版本对比视图（并排看两版差异），目前只有时间线。
+- 收藏页分类与搜索、完成回顾的跨周/跨月视图。
+- 公众号文章全文预览（当前是摘要 + 原文入口）。
+- GitHub Actions：把 `npm test` 挂上去做 CI。
 
 ---
 
@@ -137,16 +185,17 @@ tests/prototype.spec.ts   7 组 Playwright 用例
 
 | 事项 | 实情 |
 | --- | --- |
-| GitHub 凭据 | 已配 SSH：`~/.ssh/id_ed25519`（**无口令**）。`git push` 直接可用，无需再授权。 |
-| GitHub 连接器 | WorkBuddy 的 GitHub App 对该账号是**只读**安装，建仓返回 `403 Resource not accessible by integration`。新建仓库必须手动在网页上建，或改用带 `repo` 权限的 PAT。 |
-| 文件删除 | 本机 `safe-delete` 钩子会拦截对目录的删除（`trash-failed`）。`desktop-dist/Subscriber-win32-x64`、`release/` 两个过期目录共约 1 GB **删不掉**，需要手动删。 |
-| `asar.createPackage` | 是**异步**的。不 `await` 会复制到写了一半的文件，表现为产物大小乱跳（507/998/1488 KB）且偶尔损坏。 |
-| asar 写入 | 往已存在的文件写会追加，不会截断——打包脚本已用原地截断处理。 |
-| `Compress-Archive` | 对 `resources/app.asar` 会报「正由另一进程使用」。绕法：先 `cp` 到 `%TEMP%` 再压缩。 |
-| `Add-Type` | 被安全策略拦截，PowerShell 里不能用它加载 .NET 程序集。 |
-| `ELECTRON_RUN_AS_NODE` | 宿主终端会导出该变量，导致 `electron.exe` 退化成 Node 并报 `requestSingleInstanceLock` 错误。`launch.cjs` 与验证脚本都会先删掉它。 |
-| Electron 二进制 | 若 `node_modules/electron/dist` 为空，用 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ node node_modules/electron/install.js`。 |
+| GitHub 凭据 | 已配 SSH：`~/.ssh/id_ed25519`（**无口令**）。`git push` 直接可用。 |
+| GitHub 连接器 | WorkBuddy 的 GitHub App 对该账号是**只读**安装，建仓 403；新建仓库必须网页建或用带 `repo` 权限的 PAT。 |
+| 文件删除 | 本机 `safe-delete` 钩子会拦截目录删除（`trash-failed`）。过期目录需手动删。 |
+| `asar.createPackage` | 是**异步**的。不 `await` 会写出半截文件。 |
+| asar 写入 | 往已存在文件写会追加，打包脚本已做原地截断。 |
+| `Compress-Archive` | 对 `resources/app.asar` 会报占用；先 `cp` 到 `%TEMP%` 再压缩。 |
+| `Add-Type` | 被安全策略拦截。 |
+| `ELECTRON_RUN_AS_NODE` | 宿主终端会导出该变量，导致 electron 退化成 Node；`launch.cjs` 与验证脚本都会先删。 |
+| Electron 二进制 | 若 `node_modules/electron/dist` 为空：`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ node node_modules/electron/install.js`。 |
 | 依赖网络 | `npm install` 偶发超时，加 `--registry=https://registry.npmmirror.com`。 |
+| 本地预览 | `npm run dev` 必须用后台任务方式启动，否则会话结束进程会被回收；Playwright 的 `webServer` 也会自己拉起。 |
 
 ---
 
@@ -155,8 +204,9 @@ tests/prototype.spec.ts   7 组 Playwright 用例
 直接粘贴：
 
 > 继续 Subscriber 项目，路径 `D:/workbuddy/2026-10-31-18-32-31`，先读 `HANDOFF.md` 和
-> `.workbuddy/memory/` 下的记录。当前 Web 版和 Windows 桌面版都已完成并推到 GitHub，
+> `.workbuddy/memory/` 下的记录。Web 版与 Windows 桌面版都已完成，`npm test` 12 组全绿，
+> 已具备分类/版本/去重引擎、公众号订阅、赛事官网入口与模型选择。
 > 我想继续做 **（写你这次要做的具体事）**。
 
-`.workbuddy/memory/2026-11-02.md` 里有更细的实现过程记录（含每个 bug 的根因），
-排查同类问题时会比这份文档更具体。
+`.workbuddy/memory/2026-11-02.md` 有上一轮的实现细节（含每个 bug 的根因）；
+本轮记录见 `.workbuddy/memory/2026-11-03.md`。
