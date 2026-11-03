@@ -55,6 +55,8 @@ export function htmlFileToText(raw: string): string {
 export interface DropReadResult {
   /** 合并后的文本，已 trim；为空表示没读到可用内容 */
   text: string
+  /** 建议的来源名（来自文件名 / 压缩包内文件名 / 文件夹名），拆不出群名时用它 */
+  suggestedName?: string
   /** 实际读进来的文件数（压缩包/文件夹里取出的文本也算） */
   fileCount: number
   /** 被跳过的东西及原因，用于给用户一句可读的提示 */
@@ -68,9 +70,19 @@ export function isImportableDrag(data: DataTransfer | null): boolean {
   return types.includes('Files') || types.includes('text/plain')
 }
 
+/** 去掉扩展名与导出工具塞在末尾的「_20261104_000456」时间戳后缀 */
+function cleanSourceName(name: string): string {
+  return name
+    .replace(/\.[^./\\]+$/, '')
+    .replace(/[_\s]+\d{8}[_\s]\d{4,6}$/, '')
+    .trim()
+}
+
 interface FileTextResult {
   /** 读到的正文；null 表示这个文件没贡献内容 */
   text: string | null
+  /** 这个文件能提供的来源名（压缩包优先用里面第一个文本条目名） */
+  name?: string
   /** 没读到时给用户看的原因 */
   skip?: string
   /** 读到了但有附带说明（例如压缩包里有几个条目跳过） */
@@ -96,7 +108,8 @@ async function fileToText(file: File): Promise<FileTextResult> {
     const note = result.skipped.length > 0
       ? `${file.name} 里有 ${result.skipped.length} 个条目被跳过（${result.skipped[0]}）`
       : undefined
-    return { text: parts.join('\n\n'), note }
+    const innerName = cleanSourceName(result.entries[0].name.split(/[\\/]/).pop() ?? '')
+    return { text: parts.join('\n\n'), note, name: innerName || cleanSourceName(file.name) }
   }
 
   if (!(file.type.startsWith('text/') || TEXT_FILE.test(file.name))) {
@@ -108,7 +121,7 @@ async function fileToText(file: File): Promise<FileTextResult> {
   try {
     const content = decodeTextBytes(new Uint8Array(await file.arrayBuffer()))
     const text = (HTML_FILE.test(file.name) ? htmlFileToText(content) : content).trim()
-    return { text: text || null, skip: text ? undefined : `${file.name}（内容是空的）` }
+    return { text: text || null, name: cleanSourceName(file.name), skip: text ? undefined : `${file.name}（内容是空的）` }
   } catch {
     return { text: null, skip: `${file.name}（读取失败）` }
   }
@@ -185,6 +198,7 @@ export async function readDroppedContent(data: DataTransfer | null): Promise<Dro
   const chunks: string[] = []
   const skipped: string[] = []
   let fileCount = 0
+  let suggestedName = ''
   if (plain.trim()) chunks.push(plain)
 
   // 1. 整个文件夹：展开里面的文本文件（微信导出的很多是「一个 html + 一个文件目录」）
@@ -192,6 +206,7 @@ export async function readDroppedContent(data: DataTransfer | null): Promise<Dro
     const state: DirWalk = { files: [], skipped: [], count: 0 }
     await walkDirectory(entry, 0, state)
     skipped.push(...state.skipped)
+    if (!suggestedName) suggestedName = state.files.length > 0 ? cleanSourceName(entry.name as string) : ''
     for (const file of state.files) {
       const result = await fileToText(file)
       if (result.text) { chunks.push(result.text); fileCount += 1 }
@@ -215,8 +230,9 @@ export async function readDroppedContent(data: DataTransfer | null): Promise<Dro
     if (result.text) { chunks.push(result.text); fileCount += 1 }
     if (result.skip) skipped.push(result.skip)
     if (result.note) skipped.push(result.note)
+    if (!suggestedName && result.name) suggestedName = result.name
   }
 
   const text = chunks.join('\n\n').slice(0, MAX_DROP_TEXT).trim()
-  return { text, fileCount, skipped }
+  return { text, suggestedName: suggestedName || undefined, fileCount, skipped }
 }

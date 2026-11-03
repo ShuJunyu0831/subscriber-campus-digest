@@ -717,3 +717,29 @@ test('拖入微信导出的 .zip 聊天记录也能解开导入', async ({ page 
   await expect(dialog).toBeHidden()
   await expect(page.locator('.local-message')).toHaveCount(4)
 })
+
+test('微信导出的聊天记录按时间戳逐条拆开，正文里的【标签】不会被当成群名', async ({ page }) => {
+  await openHome(page)
+  const base64 = readFileSync('tests/fixtures/wechat-export.zip').toString('base64')
+  await page.evaluate((payload: string) => {
+    const bytes = Uint8Array.from(atob(payload), char => char.charCodeAt(0))
+    const data = new DataTransfer()
+    data.items.add(new File([bytes], '聊天记录_20261104_000456.zip', { type: 'application/zip' }))
+    document.body.dispatchEvent(new DragEvent('drop', { dataTransfer: data, bubbles: true, cancelable: true }))
+  }, base64)
+
+  const dialog = page.getByRole('dialog', { name: '批量导入消息' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.locator('.batch-preview-head')).toContainText('2 条')
+  // 两条消息各成一条，来源名取压缩包内的文件名
+  await expect(dialog.locator('.batch-row').first()).toContainText('聊天记录 1')
+  await expect(dialog.locator('.batch-row').nth(1)).toContainText('聊天记录 2')
+
+  const text = await dialog.innerText()
+  // 发送者行与时间戳是切分依据，不能留在正文里
+  expect(text).not.toContain('·张三')
+  expect(text).not.toContain('19:33')
+  // 【标签】属于正文，不能变成群名
+  await expect(dialog.locator('.batch-row').nth(1)).toContainText('【选拔赛通知】')
+  await expect(dialog.locator('.batch-row').nth(1)).toContainText('【第二临床医学院职业发展协会】')
+})

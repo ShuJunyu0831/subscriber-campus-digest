@@ -68,7 +68,7 @@ interface WechatInboxProps {
   follows: FollowedSource[]
   onFollowsChange: (next: FollowedSource[]) => void
   /** 外部转发进来的内容（App 收到后切到本页并传进来），stamp 变化即重新导入一次 */
-  incoming?: { text: string; stamp: number } | null
+  incoming?: { text: string; stamp: number; name?: string } | null
   /** 有内容正被拖到窗口上：由 App 的窗口级监听驱动，这里只用来高亮消息箱 */
   dragActive?: boolean
 }
@@ -295,9 +295,10 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
    */
   useEffect(() => {
     if (!incoming?.text.trim()) return
-    openBatch('wechat', incoming.text)
+    // 带上文件名做默认来源名：导出的聊天记录里没有群名，总比「未命名来源 1」好认
+    openBatch('wechat', incoming.text, incoming.name ?? '')
     notify('已接收外部转发的内容，确认拆分后再保存到本机')
-  }, [incoming?.stamp, incoming?.text, openBatch, notify])
+  }, [incoming?.stamp, incoming?.text, incoming?.name, openBatch, notify])
 
   /**
    * 拖进来的内容由 App 的窗口级监听读取并走 incoming 通道送进来，

@@ -8,7 +8,7 @@
 ## 一、一句话现状
 
 Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 GitHub 私有仓库，
-`npm test` **24 组 Playwright 全绿**、`npm run build` 通过。
+`npm test` **25 组 Playwright 全绿**、`npm run build` 通过。
 
 本轮（11-03）补齐了四件事：**信息分类/版本/去重引擎、公众号订阅、赛事官网一键入口、右下角模型选择**；
 随后打通了 **P0 真实数据链路**（`npm run collect` 官网直采 + 快照 + 桌面版实时抓取，详见待办区 P0）、
@@ -31,7 +31,7 @@ Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 
 ```bash
 npm install
 npm run dev              # 开发：http://127.0.0.1:5173
-npm test                 # Web 端 24 组 Playwright（约 50 秒）
+npm test                 # Web 端 25 组 Playwright（约 50 秒）
 npm run build            # 类型检查 + 生产构建
 npm run collect          # 真实抓取竞赛官网 → src/live/competitions.json + 桌面版采集器
 
@@ -157,7 +157,7 @@ electron/             主进程（IPC：live:fetch / live:fetch-custom / rss:fet
 electron/share-args.cjs  外部转发参数解析（协议链接 / --share-text / --share-file），纯函数、被验证脚本直接断言
 electron/live/        collector.cjs（npm run collect 生成，已 gitignore）
 .github/workflows/ci.yml  CI：build + Playwright（Node 20 + Chromium）
-tests/prototype.spec.ts   24 组 Playwright 用例
+tests/prototype.spec.ts   25 组 Playwright 用例
 ```
 
 ---
@@ -377,8 +377,19 @@ E. 验证
   拆成可保存条目、松手后提示收起，检查项 18 → **22**。
 - 压缩包支持再加 4 项（真实 deflate 包走 `tests/fixtures/chat-export.zip`，2 个 UTF-8 txt + 1 个 GBK txt + 1 个 html + 1 个 png）：
   能解开、拆出 4 条（png 被跳过）、GBK 不出乱码、html 已剥标签，检查项 22 → **26**。
-- Playwright 新增 2 组（公众号链接订阅识别账号读正文并入库；拖入文件/文字进入批量导入），共 **24 组**
+- Playwright 新增 2 组（公众号链接订阅识别账号读正文并入库；拖入文件/文字进入批量导入），共 **25 组**
   （另加「拖入非文本文件给出明确提示」与「拖入 .zip 聊天记录也能解开导入」两组）。
+
+F. 导出格式的拆分修复（`shareImport.ts`）
+- 拿到用户真实导出的 zip 后才发现：微信「导出聊天记录」的格式是每条消息前面有
+  「发送者行（`·张三`）+ 时间戳行（`2026年11月2日 19:33`）」，正文里还会出现 `【选拔赛通知】` 这类标签。
+  旧规则把这些 `【标签】` 当成「来源名行」，于是把一条消息拆成两条，还把下一条的发送者与时间戳串进了上一条。
+- 修法：`splitByTimestamps()` 优先——命中时间戳行就按时间戳切，区间内的一切（含 `【标签】`）都算正文，
+  并剥掉区间首尾的发送者行与空行。**只要 1 个时间戳就够**（只导出过一条消息时只有一个），
+  但时间戳必须落在开头 3 行以内，避免把正文里引用的日期当成边界。
+- 来源名：`readDroppedContent()` 现在会给出 `suggestedName`（压缩包取内部文件名、单文件取文件名、
+  文件夹取目录名，并去掉 `_20261104_000456` 这种导出时间戳后缀），App 透传给批量导入，
+  不再显示「未命名来源 1」。
 
 ---
 
@@ -414,7 +425,7 @@ E. 验证
 直接粘贴：
 
 > 继续 Subscriber 项目，路径 `D:/workbuddy/2026-10-31-18-32-31`，先读 `HANDOFF.md` 和
-> `.workbuddy/memory/` 下的记录。Web 版与 Windows 桌面版都已完成，`npm test` 24 组全绿，
+> `.workbuddy/memory/` 下的记录。Web 版与 Windows 桌面版都已完成，`npm test` 25 组全绿，
 > 已具备分类/版本/去重引擎、公众号订阅与 RSS 真实订阅、四个官网直采源、赛事官网入口与模型选择。
 > 我想继续做 **（写你这次要做的具体事）**。
 

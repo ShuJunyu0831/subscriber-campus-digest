@@ -38,7 +38,7 @@
 npm install
 npm run dev      # http://127.0.0.1:5173
 npm run build    # 类型检查 + 生产构建
-npm test         # Playwright 端到端测试（24 组）
+npm test         # Playwright 端到端测试（25 组）
 ```
 
 ## 桌面版

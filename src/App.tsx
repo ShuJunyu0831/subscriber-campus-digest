@@ -621,7 +621,7 @@ export default function App() {
   const [modelId, setModelId] = useState(() => readPreference<string>(MODEL_KEY, DEFAULT_MODEL_ID))
   const [follows, setFollows] = useState<FollowedSource[]>(() => readFollows())
   /** 外部转发进来的内容：收到就切到消息页并打开批量导入 */
-  const [incomingShare, setIncomingShare] = useState<{ text: string; stamp: number } | null>(null)
+  const [incomingShare, setIncomingShare] = useState<{ text: string; stamp: number; name?: string } | null>(null)
   /** 有东西正被拖到窗口上：用来显示整窗提示并高亮消息箱 */
   const [dragActive, setDragActive] = useState(false)
   const [isMobileViewport, setIsMobileViewport] = useState(() => window.innerWidth < 560)
@@ -760,7 +760,7 @@ export default function App() {
           return
         }
         setView('wechat')
-        setIncomingShare({ text: result.text, stamp: Date.now() })
+        setIncomingShare({ text: result.text, stamp: Date.now(), name: result.suggestedName })
         notify(result.skipped.length > 0
           ? `已接收${result.fileCount > 0 ? ` ${result.fileCount} 个文件` : ''}，${result.skipped.length} 个被跳过`
           : '已接收拖入的内容，确认拆分后再保存到本机')
