@@ -325,3 +325,99 @@ test('390px 移动端公众号订阅页无横向溢出', async ({ page }) => {
   await expect(page.locator('.feed-article').first()).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })
+
+test('详情页可并排对比两个版本并标出变化字段', async ({ page }) => {
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  await page.locator('.library-list .info-card').first().locator('.card-main').click()
+
+  const drawer = page.getByRole('dialog', { name: '信息详情' })
+  await expect(drawer).toBeVisible()
+  await drawer.getByRole('button', { name: /并排对比/ }).click()
+
+  const compare = page.getByRole('dialog', { name: '版本对比' })
+  await expect(compare).toBeVisible()
+  await expect(compare.locator('.compare-head')).toContainText('V1')
+  await expect(compare.locator('.compare-head')).toContainText('V2')
+
+  // 截止时间从 11月03日 改到 11月10日，这一行必须被标成「已变更」
+  const deadlineRow = compare.locator('.compare-row').filter({ hasText: /^报名截止/ })
+  await expect(deadlineRow).toHaveClass(/changed/)
+  await expect(deadlineRow).toContainText('11月03日 23:59')
+  await expect(deadlineRow).toContainText('11月10日 23:59')
+  expect(await compare.locator('.compare-row.changed').count()).toBeGreaterThan(0)
+
+  await compare.locator('.modal-actions').getByRole('button', { name: '关闭' }).click()
+  await expect(compare).toBeHidden()
+  await expect(drawer).toBeVisible()
+})
+
+test('收藏页可搜索、按分类筛选并切换排序', async ({ page }) => {
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /我的收藏/ }).click()
+  await expect(page.locator('.searchbar-hint')).toContainText('已收藏')
+  const favoriteCards = page.locator('.library-list .info-card')
+  expect(await favoriteCards.count()).toBeGreaterThan(1)
+
+  // 页内搜索（顶部搜索框在窄屏会被隐藏，这里必须独立可用）
+  await page.getByLabel('在信息库中搜索').fill('数学建模')
+  await expect(favoriteCards).toHaveCount(1)
+  await expect(favoriteCards.first()).toContainText('数学建模')
+  await page.getByRole('button', { name: '清除搜索' }).click()
+  expect(await favoriteCards.count()).toBeGreaterThan(1)
+
+  // 分类筛选保留收藏范围
+  await page.locator('.filter-tabs').getByRole('button', { name: /课程通知/ }).click()
+  await expect(favoriteCards).toHaveCount(0)
+  await page.locator('.filter-tabs').getByRole('button', { name: /竞赛/ }).click()
+  expect(await favoriteCards.count()).toBeGreaterThan(0)
+
+  // 排序：临近截止把最早的未截止竞赛顶到最前
+  await page.locator('.filter-tabs').getByRole('button', { name: /全部/ }).click()
+  await page.getByRole('button', { name: '临近截止' }).click()
+  await expect(favoriteCards.first()).toContainText('数学建模')
+  await page.getByRole('button', { name: '默认排序' }).click()
+  await expect(page.locator('.library-list .info-card').first()).toBeVisible()
+})
+
+test('完成回顾可按本周 / 本月 / 全部切换并分组', async ({ page }) => {
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /完成回顾/ }).click()
+  const periods = page.locator('.review-periods')
+  await expect(periods.getByRole('button', { name: /全部/ })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.locator('.completed-group-head')).not.toHaveCount(0)
+  const allCount = await page.locator('.completed-list article').count()
+  expect(allCount).toBeGreaterThan(0)
+
+  // 演示数据里的完成记录都在上周，本周应为空
+  await periods.getByRole('button', { name: /本周/ }).click()
+  await expect(page.locator('.completed-list article')).toHaveCount(0)
+  await expect(page.locator('.empty-state')).toBeVisible()
+
+  // 标记一条完成 → 本周计数与列表同步增长
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  await page.locator('.library-list .info-card').first().getByRole('button', { name: '标记完成' }).click()
+  await page.locator('.main-nav').getByRole('button', { name: /完成回顾/ }).click()
+  await expect(periods.getByRole('button', { name: /本周/ })).toContainText('1')
+  await periods.getByRole('button', { name: /全部/ }).click()
+  await expect(page.locator('.completed-list article')).toHaveCount(allCount + 1)
+})
+
+test('公众号文章可以打开演示全文阅读', async ({ page }) => {
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /微信消息/ }).click()
+  await page.getByRole('tab', { name: /公众号订阅/ }).click()
+
+  const article = page.locator('.feed-article').filter({ hasText: '数据结构' }).first()
+  await article.locator('.feed-title').click()
+  await article.getByRole('button', { name: '阅读全文' }).click()
+
+  const reader = page.getByRole('dialog', { name: '文章全文预览' })
+  await expect(reader).toBeVisible()
+  await expect(reader).toContainText('演示全文')
+  await expect(reader).toContainText('信息楼B203')
+  await expect(reader).toContainText('请各班学习委员相互转告')
+
+  await reader.locator('.modal-actions').getByRole('button', { name: '关闭' }).click()
+  await expect(reader).toBeHidden()
+})

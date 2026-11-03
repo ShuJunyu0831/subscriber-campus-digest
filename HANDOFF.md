@@ -8,12 +8,13 @@
 ## 一、一句话现状
 
 Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 GitHub 私有仓库，
-`npm test` **13 组 Playwright 全绿**、`npm run build` 通过。
+`npm test` **17 组 Playwright 全绿**、`npm run build` 通过。
 
 本轮（11-03）补齐了四件事：**信息分类/版本/去重引擎、公众号订阅、赛事官网一键入口、右下角模型选择**；
 随后打通了 **P0 真实数据链路**（`npm run collect` 官网直采 + 快照 + 桌面版实时抓取，详见待办区 P0）
-和 **P2 模型真实路由**（`src/llmClient.ts` + LlmPicker 凭据区 + 导入真实调用 + Playwright mock 验证，详见待办区 P2）。
-仍然没做的是：公众号真实订阅源（P1）。
+和 **P2 模型真实路由**（`src/llmClient.ts` + LlmPicker 凭据区 + 导入真实调用 + Playwright mock 验证，详见待办区 P2），
+以及 **P4 体验补完**（版本并排对比、收藏页搜索/排序、完成回顾本周本月切换、公众号全文阅读、GitHub Actions CI，详见待办区 P4）。
+仍然没做的是：公众号真实订阅源（P1）与安装包签名（P3）。
 
 ---
 
@@ -24,7 +25,7 @@ Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 
 ```bash
 npm install
 npm run dev              # 开发：http://127.0.0.1:5173
-npm test                 # Web 端 13 组 Playwright（约 35 秒）
+npm test                 # Web 端 17 组 Playwright（约 37 秒）
 npm run build            # 类型检查 + 生产构建
 npm run collect          # 真实抓取竞赛官网 → src/live/competitions.json + 桌面版采集器
 
@@ -40,7 +41,12 @@ npm run desktop:verify   # 拉起打包后的 exe 跑 13 项检查
 3. 点首张卡片：详情抽屉里有版本时间线、分类与去重说明、底部官网按钮。
 4. 进「微信消息 → 公众号订阅」：账号分组、按条列出，第一条带「版本更新」。
 5. 点「同步更新」→ 出现 2 条新消息 → 点「合并更新」→ 回到信息库，首张卡片变为 **V3**。
-6. 点右下角模型胶囊：切换 Kimi / 通义千问等，选择会被记住，微信分析的确认弹窗会引用当前模型。
+6. 点右下角模型胶囊：切换 Kimi / 通义千问等，选择会被记住，微信分析的确认弹窗会引用当前模型；
+   面板底部「接入真实模型」可保存 API Key，之后手动导入粘贴文字会真实调用厂商接口。
+7. 进「全部信息」，用工具条下的搜索框搜「数学建模」→ 只剩一条；点「临近截止」→ 挑战杯排到最前。
+8. 打开首张卡片 → 版本记录右侧「并排对比」→ 弹窗并排看 V1 / V2，截止时间那行标「已变更」。
+9. 进「完成回顾」→ 切「本周 / 本月 / 全部」，列表按天或按月分组。
+10. 进「微信消息 → 公众号订阅」→ 点《数据结构》标题 → 「阅读全文」看演示全文。
 
 ---
 
@@ -117,8 +123,9 @@ src/
   accounts.ts         公众号与文章演示数据、可信度等级
   AccountFeed.tsx     公众号订阅页（分组、筛选、同步、查重、入库）
   TaxonomyModal.tsx   分类规则与版本记录说明
-  LlmPicker.tsx       右下角模型选择面板
-  llmModels.ts        国内常见模型清单（仅展示元数据）
+  LlmPicker.tsx       右下角模型选择面板（含真实模型接入设置区）
+  llmModels.ts        国内常见模型清单 + VENDOR_ENDPOINTS（9 家厂商端点预设）
+  llmClient.ts        真实模型调用（localStorage 凭据 + OpenAI 兼容 chat/completions）
   GradientASCII.tsx   全屏 WebGL2 多 Pass ASCII 背景
   SplitText.tsx       逐字动画标题
   WechatInbox.tsx     微信消息：本机导入 + 公众号订阅标签
@@ -128,7 +135,8 @@ src/
 scripts/collect.mjs   真实采集脚本（esbuild 打包 liveSource → Node 抓取 → 写快照 + 桌面版采集器）
 electron/             主进程（含 live:fetch IPC）、打包、图标、验证脚本
 electron/live/        collector.cjs（npm run collect 生成，已 gitignore）
-tests/prototype.spec.ts   12 组 Playwright 用例
+.github/workflows/ci.yml  CI：build + Playwright（Node 20 + Chromium）
+tests/prototype.spec.ts   17 组 Playwright 用例
 ```
 
 ---
@@ -203,11 +211,17 @@ tests/prototype.spec.ts   12 组 Playwright 用例
 - NSIS 安装包在本机仍可能因目录重命名 `EPERM` 失败；换干净机器可直接跑 `npm run desktop:build`。
 - 改动 PE 资源后 Electron 原签名失效，`Subscriber.exe` 会触发 SmartScreen；对外分发需自购代码签名证书。
 
-**P4 — 体验补完**
-- 版本对比视图（并排看两版差异），目前只有时间线。
-- 收藏页分类与搜索、完成回顾的跨周/跨月视图。
-- 公众号文章全文预览（当前是摘要 + 原文入口）。
-- GitHub Actions：把 `npm test` 挂上去做 CI。
+**P4 — 体验补完（版本对比 / 收藏检索 / 回顾分期 / 全文阅读 / CI，2026-11-03）**
+- 版本对比：详情抽屉「版本记录」右侧「并排对比」→ 弹窗里选两个版本，逐字段（标题/摘要/报名截止/发布时间/来源/版本说明）
+  列出差异，变更行标「已变更」并给旧值加删除线。
+- 信息库与收藏页：工具条下新增页内搜索框 + 「默认排序 / 临近截止」切换（未截止按时间正序、无日期居中、已截止垫底）。
+  顶部全局搜索在 ≤1160px 会被隐藏，页内搜索解决了窄屏无搜索入口的问题。
+- 完成回顾：新增「本周 / 本月 / 全部」切换，按天（周/月视图）或按月（全部视图）分组，`.completed-list` 仍是单一容器，
+  组头 `completed-group-head` 插在列表里；完成时间从 `completedAt` 文本解析（支持「今天」）。
+- 公众号全文阅读：`AccountArticle.fullText`（3 篇示例）→ 文章展开后「阅读全文」打开阅读弹窗，标注「演示全文」；
+  无全文的文章明确提示「这篇只有摘要」，不会编造正文。
+- CI：`.github/workflows/ci.yml`（Node 20 + Chromium + `npm run build` + `npm test`，失败上传 test-results）。
+- 测试：17 组全绿（新增 4 组：版本对比字段变更、收藏搜索/筛选/排序、回顾分期计数、公众号全文）。
 
 ---
 

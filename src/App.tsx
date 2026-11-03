@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -40,7 +40,7 @@ import {
 } from 'lucide-react'
 import { categoryMeta, initialItems, type AddItemResult, type Category, type InfoItem, type NewItemInput, type View } from './data'
 import { buildLiveItems, currentFetchedAt, formatFetchedAt, liveSnapshot, setLiveFetchedAt } from './liveSnapshot'
-import { classifyLibrary, deadlineDays, deadlineLabel, findExistingItem, inferCategory, STATUS_LABEL, type Classification } from './classify'
+import { classifyLibrary, deadlineDays, deadlineLabel, findExistingItem, inferCategory, parseDateText, STATUS_LABEL, type Classification } from './classify'
 import { officialAccounts, type AccountArticle } from './accounts'
 import GradientASCII from './GradientASCII'
 import SplitText from './SplitText'
@@ -370,12 +370,13 @@ function DiscoverModal({ onClose, onAdd, notify, subscribedKeys }: {
   )
 }
 
-function DetailDrawer({ entry, onClose, onFavorite, onLike, onComplete, notify }: {
+function DetailDrawer({ entry, onClose, onFavorite, onLike, onComplete, onCompare, notify }: {
   entry: Classification
   onClose: () => void
   onFavorite: () => void
   onLike: () => void
   onComplete: () => void
+  onCompare: () => void
   notify: (message: string) => void
 }) {
   const { item, versions, status, confidence, matched, duplicateCount, topics } = entry
@@ -403,7 +404,7 @@ function DetailDrawer({ entry, onClose, onFavorite, onLike, onComplete, notify }
           <section className="detail-section"><h3>需要留意</h3><ul className="key-points">{item.keyPoints.map(point => <li key={point}><Check size={15} />{point}</li>)}</ul></section>
 
           {versions.length > 1 && <section className="detail-section version-section">
-            <h3>版本记录<span className="section-badge">{versions.length} 个版本</span></h3>
+            <h3>版本记录<span className="section-badge">{versions.length} 个版本</span><button type="button" className="text-button version-compare-trigger" onClick={onCompare}><GitBranch size={13} />并排对比</button></h3>
             <ol className="version-timeline">
               {versions.map(version => (
                 <li key={version.id} className={version.version === versions.length ? 'current' : 'past'}>
@@ -483,6 +484,122 @@ function DigestModal({ items, stats, modelName, onClose, onOpenItem, notify }: {
   )
 }
 
+/* ------------------------- P4：版本对比与回顾分期工具 ------------------------- */
+
+const DAY_MS = 86_400_000
+const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+type ReviewPeriod = 'week' | 'month' | 'all'
+
+const REVIEW_PERIOD_LABEL: Record<ReviewPeriod, string> = { week: '本周', month: '本月', all: '全部' }
+const REVIEW_PERIOD_PHRASE: Record<ReviewPeriod, string> = { week: '本周', month: '本月', all: '这段时间' }
+
+/** 周一为一周起点，与「本周完成」的直觉一致。 */
+function startOfWeek(date: Date): number {
+  const copy = new Date(date)
+  const offset = (copy.getDay() + 6) % 7
+  copy.setDate(copy.getDate() - offset)
+  copy.setHours(0, 0, 0, 0)
+  return copy.getTime()
+}
+
+/** 完成时间目前是「今天 / 10月28日」这类文本，统一换算成时间戳供分期使用。 */
+function completedTimestamp(item: InfoItem): number | null {
+  if (!item.completedAt) return null
+  if (/今天|刚刚/.test(item.completedAt)) return Date.now()
+  return parseDateText(item.completedAt)
+}
+
+function inReviewPeriod(timestamp: number | null, period: ReviewPeriod, now = new Date()): boolean {
+  if (period === 'all') return true
+  if (timestamp === null) return false
+  if (period === 'month') {
+    const date = new Date(timestamp)
+    return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth()
+  }
+  const weekStart = startOfWeek(now)
+  return timestamp >= weekStart && timestamp < weekStart + 7 * DAY_MS
+}
+
+function reviewGroupOf(timestamp: number | null, period: ReviewPeriod): { key: string; label: string } {
+  if (timestamp === null) return { key: 'unknown', label: '完成日期待核对' }
+  const date = new Date(timestamp)
+  const month = date.getMonth() + 1
+  const day = date.getDate()
+  if (period === 'all') return { key: `${date.getFullYear()}-${month}`, label: `${date.getFullYear()} 年 ${month} 月` }
+  return { key: `${date.getFullYear()}-${month}-${day}`, label: `${month}月${day}日 · ${WEEKDAY_LABELS[date.getDay()]}` }
+}
+
+/** 临近截止排序：未截止的按时间正序，无日期的居中，已截止的按时间倒序垫底。 */
+function deadlineRank(item: InfoItem): { group: number; value: number } {
+  const parsed = item.deadlineTs ? Date.parse(item.deadlineTs) : parseDateText(item.deadline)
+  if (parsed === null || Number.isNaN(parsed)) return { group: 1, value: 0 }
+  return parsed >= Date.now() ? { group: 0, value: parsed } : { group: 2, value: -parsed }
+}
+
+function VersionCompareModal({ entry, resolveItem, onClose }: {
+  entry: Classification
+  resolveItem: (id: number) => InfoItem | undefined
+  onClose: () => void
+}) {
+  const versions = entry.versions
+  const [leftId, setLeftId] = useState(versions[0].id)
+  const [rightId, setRightId] = useState(versions[versions.length - 1].id)
+  const left = versions.find(version => version.id === leftId) ?? versions[0]
+  const right = versions.find(version => version.id === rightId) ?? versions[versions.length - 1]
+  const leftItem = resolveItem(left.id)
+  const rightItem = resolveItem(right.id)
+  const rows = [
+    { label: '标题', left: left.title, right: right.title },
+    { label: '摘要', left: leftItem?.summary ?? '未提供', right: rightItem?.summary ?? '未提供' },
+    { label: '报名截止', left: left.deadline ?? '未标注', right: right.deadline ?? '未标注' },
+    { label: '发布时间', left: left.publishedAt, right: right.publishedAt },
+    { label: '来源', left: left.source, right: right.source },
+    { label: '版本说明', left: left.changeNote, right: right.changeNote },
+  ]
+  const changedCount = rows.filter(row => row.left !== row.right).length
+
+  const picker = (value: number, onChange: (id: number) => void, label: string) => (
+    <label className="compare-picker-field">
+      <span>{label}</span>
+      <select value={value} onChange={event => onChange(Number(event.target.value))}>
+        {versions.map(version => <option key={version.id} value={version.id}>V{version.version} · {version.publishedAt}</option>)}
+      </select>
+    </label>
+  )
+
+  return (
+    <ModalShell title="版本对比" eyebrow={`VERSION DIFF · ${changedCount} 处变化`} onClose={onClose} wide className="compare-modal">
+      <div className="modal-body">
+        <div className="compare-picker">
+          {picker(left.id, setLeftId, '旧版本')}
+          <ArrowRight size={16} />
+          {picker(right.id, setRightId, '新版本')}
+          <button type="button" className="text-button" onClick={() => { setLeftId(versions[0].id); setRightId(versions[versions.length - 1].id) }}>最早 → 最新</button>
+        </div>
+        <div className="compare-table">
+          <div className="compare-head"><span>字段</span><span>V{left.version}</span><span>V{right.version}</span><span>变化</span></div>
+          {rows.map(row => {
+            const changed = row.left !== row.right
+            return (
+              <div className={`compare-row ${changed ? 'changed' : ''}`} key={row.label}>
+                <span className="compare-label">{row.label}</span>
+                <span className="compare-value old">{row.left}</span>
+                <span className="compare-value new">{row.right}</span>
+                <span className={`compare-flag ${changed ? 'changed' : 'same'}`}>{changed ? '已变更' : '一致'}</span>
+              </div>
+            )
+          })}
+        </div>
+        <p className="compare-note">差异来自官方原文与转载的不同表述；重要日期请以最新版本的原文依据为准，旧版本仅作留档。</p>
+      </div>
+      <div className="modal-actions">
+        <span className="ai-note"><GitBranch size={14} />共 {versions.length} 个版本，本事件已折叠 {entry.duplicateCount} 条重复来源</span>
+        <button className="button primary" onClick={onClose}>关闭</button>
+      </div>
+    </ModalShell>
+  )
+}
+
 export default function App() {
   const [view, setView] = useState<View>('today')
   const [items, setItems] = useState<InfoItem[]>(() => [...initialItems, ...buildLiveItems()])
@@ -495,6 +612,9 @@ export default function App() {
   const [digestOpen, setDigestOpen] = useState(() => !new URLSearchParams(window.location.search).get('share'))
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'全部' | Category>('全部')
+  const [sortMode, setSortMode] = useState<'default' | 'deadline'>('default')
+  const [compareId, setCompareId] = useState<number | null>(null)
+  const [reviewPeriod, setReviewPeriod] = useState<ReviewPeriod>('all')
   const [toast, setToast] = useState('')
   const [modelId, setModelId] = useState(() => readPreference<string>(MODEL_KEY, DEFAULT_MODEL_ID))
   const [isMobileViewport, setIsMobileViewport] = useState(() => window.innerWidth < 560)
@@ -504,8 +624,43 @@ export default function App() {
   const library = useMemo(() => classifyLibrary(items), [items])
   const visibleItems = useMemo(() => library.visible.map(entry => entry.item), [library])
   const selectedEntry = selectedId ? library.byId.get(selectedId) ?? null : null
+  const compareEntry = compareId ? library.byId.get(compareId) ?? null : null
 
-  const completed = visibleItems.filter(item => item.completed)
+  /** 完成回顾：本周 / 本月 / 全部，按天或按月分组，默认全部（看到完整记录）。 */
+  const completedWithTime = useMemo(
+    () => visibleItems.filter(item => item.completed).map(item => ({ item, timestamp: completedTimestamp(item) })),
+    [visibleItems],
+  )
+  const reviewCounts = useMemo(() => ({
+    week: completedWithTime.filter(entry => inReviewPeriod(entry.timestamp, 'week')).length,
+    month: completedWithTime.filter(entry => inReviewPeriod(entry.timestamp, 'month')).length,
+    all: completedWithTime.length,
+  }), [completedWithTime])
+  const reviewEntries = useMemo(
+    () => completedWithTime.filter(entry => inReviewPeriod(entry.timestamp, reviewPeriod)),
+    [completedWithTime, reviewPeriod],
+  )
+  const reviewItems = reviewEntries.map(entry => entry.item)
+  const reviewGroups = useMemo(() => {
+    const groups: { key: string; label: string; items: InfoItem[] }[] = []
+    for (const entry of reviewEntries) {
+      const group = reviewGroupOf(entry.timestamp, reviewPeriod)
+      const existing = groups.find(candidate => candidate.key === group.key)
+      if (existing) existing.items.push(entry.item)
+      else groups.push({ key: group.key, label: group.label, items: [entry.item] })
+    }
+    return groups
+  }, [reviewEntries, reviewPeriod])
+  const reviewRange = useMemo(() => {
+    if (reviewPeriod === 'all') return '全部记录'
+    if (reviewPeriod === 'month') {
+      const now = new Date()
+      return `${now.getFullYear()} 年 ${now.getMonth() + 1} 月`
+    }
+    const start = new Date(startOfWeek(new Date()))
+    const end = new Date(start.getTime() + 6 * DAY_MS)
+    return `${start.getMonth() + 1}月${start.getDate()}日 — ${end.getMonth() + 1}月${end.getDate()}日`
+  }, [reviewPeriod])
   const dailyItems = visibleItems.filter(item => item.daily && !item.completed)
   const upcoming = useMemo(() => visibleItems
     .map(item => ({ item, days: deadlineDays(item) }))
@@ -532,7 +687,7 @@ export default function App() {
   }, [notify])
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { setSelectedId(null); setImportOpen(false); setDiscoverOpen(false); setTaxonomyOpen(false); setDigestOpen(false) }
+      if (event.key === 'Escape') { setSelectedId(null); setCompareId(null); setImportOpen(false); setDiscoverOpen(false); setTaxonomyOpen(false); setDigestOpen(false) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -647,13 +802,21 @@ export default function App() {
     }
   }, [addItem, notify, liveRefreshing])
 
-  const filteredItems = useMemo(() => visibleItems.filter(item => {
-    const matchView = view === 'favorites' ? item.favorite : view === 'review' ? item.completed : true
-    const matchFilter = filter === '全部' || item.category === filter
-    const keyword = search.trim().toLowerCase()
-    const matchSearch = !keyword || `${item.title}${item.summary}${item.source}${item.tags.join('')}`.toLowerCase().includes(keyword)
-    return matchView && matchFilter && matchSearch
-  }), [visibleItems, view, filter, search])
+  const filteredItems = useMemo(() => {
+    const matched = visibleItems.filter(item => {
+      const matchView = view === 'favorites' ? item.favorite : view === 'review' ? item.completed : true
+      const matchFilter = filter === '全部' || item.category === filter
+      const keyword = search.trim().toLowerCase()
+      const matchSearch = !keyword || `${item.title}${item.summary}${item.source}${item.tags.join('')}`.toLowerCase().includes(keyword)
+      return matchView && matchFilter && matchSearch
+    })
+    if (sortMode === 'default') return matched
+    return [...matched].sort((a, b) => {
+      const left = deadlineRank(a)
+      const right = deadlineRank(b)
+      return left.group - right.group || left.value - right.value
+    })
+  }, [visibleItems, view, filter, search, sortMode])
 
   const navigate = (next: View) => { setView(next); setSearch(''); setFilter('全部'); window.scrollTo({ top: 0, behavior: 'smooth' }) }
   const openItem = (item: InfoItem) => setSelectedId(item.id)
@@ -737,7 +900,7 @@ export default function App() {
               </div>
               <aside className="right-rail today-rail">
                 <section className="rail-section deadline-section"><div className="section-heading"><h2>接下来</h2><CalendarDays size={18} /></div><div className="timeline">{upcoming.map(({ item, days }) => { const date = item.deadlineTs ? new Date(item.deadlineTs) : null; return <button key={item.id} onClick={() => openItem(item)}><span className={`timeline-date ${days <= 1 ? 'urgent' : ''}`}><strong>{date ? String(date.getDate()).padStart(2, '0') : '--'}</strong><small>{date ? `${date.getMonth() + 1}月` : ''}</small></span><span><strong>{item.title}</strong><small>{days === 0 ? '今天截止' : `${days}天后截止`}</small></span></button> })}</div><button className="rail-link" onClick={() => { navigate('library'); setFilter('竞赛') }}>全部竞赛安排<ChevronRight size={15} /></button></section>
-                <section className="rail-section review-preview"><div className="section-heading"><h2>本周完成</h2><CheckCircle2 size={18} /></div><div className="review-number"><strong>{completed.length}</strong><span>项已完成<small>每一步都有迹可循</small></span></div><div className="completion-track"><span style={{ width: `${Math.min(completed.length * 12 + 20, 100)}%` }} /></div><p>比上周同期多完成 1 项</p><button className="rail-link" onClick={() => navigate('review')}>查看完成回顾<ChevronRight size={15} /></button></section>
+                <section className="rail-section review-preview"><div className="section-heading"><h2>本周完成</h2><CheckCircle2 size={18} /></div><div className="review-number"><strong>{reviewCounts.week}</strong><span>项已完成<small>每一步都有迹可循</small></span></div><div className="completion-track"><span style={{ width: `${Math.min(reviewCounts.week * 12 + 20, 100)}%` }} /></div><p>还可以在完成回顾里按月查看</p><button className="rail-link" onClick={() => navigate('review')}>查看完成回顾<ChevronRight size={15} /></button></section>
                 <section className="rail-section source-status"><div className="source-status-icon"><Cloud size={20} /></div><div><strong>云端同步 · 设计预览</strong><span>正式版将保存收藏与完成记录</span></div><span className="sync-dot" /></section>
               </aside>
             </div>
@@ -757,15 +920,51 @@ export default function App() {
               </div>
               <span className="result-total">{filteredItems.length} 条结果</span>
             </div>
-            {search && <div className="active-search"><Search size={15} />“{search}” 的搜索结果<button onClick={() => setSearch('')}><X size={14} /></button></div>}
+            <div className="library-searchbar">
+              <label className="inline-search">
+                <Search size={14} />
+                <input aria-label="在信息库中搜索" value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索标题、摘要、来源或标签" />
+                {search && <button type="button" aria-label="清除搜索" onClick={() => setSearch('')}><X size={12} /></button>}
+              </label>
+              <div className="sort-switch" role="group" aria-label="排序方式">
+                <button type="button" className={sortMode === 'default' ? 'active' : ''} aria-pressed={sortMode === 'default'} onClick={() => setSortMode('default')}>默认排序</button>
+                <button type="button" className={sortMode === 'deadline' ? 'active' : ''} aria-pressed={sortMode === 'deadline'} onClick={() => setSortMode('deadline')}>临近截止</button>
+              </div>
+              <span className="searchbar-hint">{search
+                ? `“${search}” 匹配 ${filteredItems.length} 条`
+                : view === 'favorites'
+                  ? `已收藏 ${visibleItems.filter(item => item.favorite).length} 条，可按分类筛选`
+                  : '按事件归并 · 支持标题、摘要、来源与标签'}</span>
+            </div>
             <div className="info-list library-list">{filteredItems.map(item => { const classification = library.byId.get(item.id); return classification ? <ItemCard key={item.id} entry={classification} onOpen={() => openItem(item)} onFavorite={() => toggleFavorite(item.id)} onComplete={() => toggleComplete(item.id)} /> : null })}</div>
             {filteredItems.length === 0 && <EmptyState type={view === 'favorites' && !search && filter === '全部' ? 'favorite' : 'search'} onReset={() => { setSearch(''); setFilter('全部') }} />}
           </>}
 
           {view === 'review' && <>
-            <section className="page-heading"><div><span className="eyebrow">PROGRESS, NOT PRESSURE</span><SplitText tag="h1" text="完成回顾" effect="rise" splitType="chars" delay={58} duration={0.8} staggerFrom="start" trigger="load" textAlign="left" className="split-heading" /><p>不只看还有多少要做，也看看你已经走了多远。</p></div><span className="date-range"><CalendarDays size={16} />10月26日—11月1日</span></section>
-            <section className="review-hero"><div><span className="briefing-label"><Sparkles size={15} />本周回顾</span><h2>你完成了 <em>{completed.length}</em> 件事，<br />也为下一次出发留出了空间。</h2><p>本周你参与了 {completed.filter(i => i.category === '课程通知').length} 项课程与活动，关注了 {visibleItems.filter(i => i.category === '竞赛' && i.completed).length} 项竞赛。完成记录均由你手动勾选，Subscriber只做整理。</p><button className="light-button" onClick={() => notify('已根据最新完成记录刷新摘要')}><Sparkles size={16} />刷新回顾摘要</button></div><div className="review-stats"><div><strong>{completed.length}</strong><span>完成项目</span></div><div><strong>{visibleItems.filter(i => i.liked).length}</strong><span>喜欢内容</span></div><div><strong>{visibleItems.filter(i => i.favorite).length}</strong><span>收藏信息</span></div></div></section>
-            <section className="section-block completed-section"><div className="section-heading"><div><h2>已完成的项目</h2><span>{completed.length} 条</span></div><span className="manual-note"><CheckCheck size={15} />手动记录</span></div><div className="completed-list">{completed.map(item => <article key={item.id}><span className="completed-check"><Check size={17} /></span><button className="completed-copy" onClick={() => openItem(item)}><span><Tag category={item.category} /><small>{item.completedAt}完成</small></span><h3>{item.title}</h3><p>{item.summary}</p></button><IconButton label="取消完成" onClick={() => toggleComplete(item.id)}><RotateCcwIcon /></IconButton></article>)}</div>{completed.length === 0 && <EmptyState type="review" />}</section>
+            <section className="page-heading"><div><span className="eyebrow">PROGRESS, NOT PRESSURE</span><SplitText tag="h1" text="完成回顾" effect="rise" splitType="chars" delay={58} duration={0.8} staggerFrom="start" trigger="load" textAlign="left" className="split-heading" /><p>不只看还有多少要做，也看看你已经走了多远。</p></div><span className="date-range"><CalendarDays size={16} />{reviewRange}</span></section>
+            <section className="review-hero"><div><span className="briefing-label"><Sparkles size={15} />{REVIEW_PERIOD_LABEL[reviewPeriod]}回顾</span><h2>你完成了 <em>{reviewItems.length}</em> 件事，<br />也为下一次出发留出了空间。</h2><p>{REVIEW_PERIOD_PHRASE[reviewPeriod]}你参与了 {reviewItems.filter(i => i.category === '课程通知').length} 项课程与活动，关注了 {reviewItems.filter(i => i.category === '竞赛').length} 项竞赛。完成记录均由你手动勾选，Subscriber只做整理。</p><button className="light-button" onClick={() => notify('已根据最新完成记录刷新摘要')}><Sparkles size={16} />刷新回顾摘要</button></div><div className="review-stats"><div><strong>{reviewItems.length}</strong><span>完成项目</span></div><div><strong>{visibleItems.filter(i => i.liked).length}</strong><span>喜欢内容</span></div><div><strong>{visibleItems.filter(i => i.favorite).length}</strong><span>收藏信息</span></div></div></section>
+            <section className="section-block completed-section">
+              <div className="section-heading">
+                <div><h2>已完成的项目</h2><span>{reviewItems.length} 条</span></div>
+                <div className="review-periods" role="group" aria-label="回顾时间范围">
+                  {(['week', 'month', 'all'] as const).map(period => (
+                    <button key={period} type="button" className={reviewPeriod === period ? 'active' : ''} aria-pressed={reviewPeriod === period} onClick={() => setReviewPeriod(period)}>
+                      {REVIEW_PERIOD_LABEL[period]}<span>{reviewCounts[period]}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="completed-list">
+                {reviewGroups.map(group => (
+                  <Fragment key={group.key}>
+                    <div className="completed-group-head"><span>{group.label}</span><small>{group.items.length} 项</small></div>
+                    {group.items.map(item => <article key={item.id}><span className="completed-check"><Check size={17} /></span><button className="completed-copy" onClick={() => openItem(item)}><span><Tag category={item.category} /><small>{item.completedAt}完成</small></span><h3>{item.title}</h3><p>{item.summary}</p></button><IconButton label="取消完成" onClick={() => toggleComplete(item.id)}><RotateCcwIcon /></IconButton></article>)}
+                  </Fragment>
+                ))}
+              </div>
+              {reviewItems.length === 0 && <EmptyState type="review" />}
+              {reviewItems.length > 0 && <p className="review-footnote"><CheckCheck size={14} />完成记录只保存在本机；切换本周 / 本月 / 全部，可以按天或按月回看。</p>}
+            </section>
           </>}
         </div>
       </main>
@@ -776,7 +975,8 @@ export default function App() {
 
       {importOpen && <ImportModal onClose={() => setImportOpen(false)} onAdd={addItem} notify={notify} modelName={model.name} />}
       {discoverOpen && <DiscoverModal onClose={() => setDiscoverOpen(false)} onAdd={addItem} notify={notify} subscribedKeys={subscribedKeys} />}
-      {selectedEntry && <DetailDrawer entry={selectedEntry} onClose={() => setSelectedId(null)} onFavorite={() => toggleFavorite(selectedEntry.item.id)} onLike={() => updateItem(selectedEntry.item.id, { liked: !selectedEntry.item.liked })} onComplete={() => toggleComplete(selectedEntry.item.id)} notify={notify} />}
+      {selectedEntry && <DetailDrawer entry={selectedEntry} onClose={() => setSelectedId(null)} onFavorite={() => toggleFavorite(selectedEntry.item.id)} onLike={() => updateItem(selectedEntry.item.id, { liked: !selectedEntry.item.liked })} onComplete={() => toggleComplete(selectedEntry.item.id)} onCompare={() => setCompareId(selectedEntry.item.id)} notify={notify} />}
+      {compareEntry && <VersionCompareModal entry={compareEntry} resolveItem={id => items.find(item => item.id === id)} onClose={() => setCompareId(null)} />}
       {digestOpen && <DigestModal items={dailyItems} stats={library.stats} modelName={model.name} onClose={() => setDigestOpen(false)} onOpenItem={openItem} notify={notify} />}
       {taxonomyOpen && <TaxonomyModal library={library} onClose={() => setTaxonomyOpen(false)} onOpenGroup={id => setSelectedId(id)} />}
       {toast && <div className="toast" role="status"><CheckCircle2 size={18} />{toast}</div>}

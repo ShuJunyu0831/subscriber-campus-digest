@@ -32,6 +32,8 @@ export interface AccountArticle {
   deadline?: string
   deadlineTs?: string
   officialUrl?: string
+  /** 演示全文（按段落）。只有部分示例文章提供，用于展示阅读体验；真实全文需授权后读取。 */
+  fullText?: string[]
   /** 只有点过“同步更新”后才出现的条目。 */
   incoming?: boolean
 }
@@ -133,6 +135,13 @@ export const accountArticles: AccountArticle[] = [
     deadline: '11月03日 23:59',
     deadlineTs: '2026-11-03T23:59:00+08:00',
     officialUrl: 'https://www.mcm.edu.cn/',
+    fullText: [
+      '各学院、各位同学：为选拔优秀队伍参加2026年全国大学生数学建模竞赛，学校决定开展校内选拔，现将有关事项通知如下。',
+      '一、参赛对象：全校全日制本科生，三人一队，鼓励跨学院、跨专业组队。每队须指定一名队长，负责报名与材料提交。',
+      '二、报名方式：请于11月3日23:59前由队长登录竞赛管理系统，填写队伍信息并上传学生证照片，逾期不再补报。',
+      '三、选拔安排：11月12日至15日进行校内选拔，形式为连续三天的建模与论文写作，具体地点另行通知。',
+      '四、其他：已报名队伍请留意教务处后续通知，赛前培训安排将在报名结束后统一发布。',
+    ],
   },
   {
     id: 'art-ds-jwc',
@@ -144,6 +153,11 @@ export const accountArticles: AccountArticle[] = [
     keywords: ['数据结构', '调课', '实验'],
     readMinutes: 1,
     eventKey: 'course-ds-week9-2026',
+    fullText: [
+      '因任课教师参加学校教学研讨会，原定于周二第3—4节的《数据结构》课程调整至周四第5—6节。',
+      '上课地点不变，仍为信息楼B203。本次课程将安排二叉树实验讲解，请同学们提前完成实验环境配置。',
+      '请各班学习委员相互转告，如有疑问请联系计算机学院教务办公室。',
+    ],
   },
   {
     id: 'art-midterm-jwc',
@@ -206,6 +220,11 @@ export const accountArticles: AccountArticle[] = [
     deadline: '11月12日 23:59',
     deadlineTs: '2026-11-12T23:59:00+08:00',
     officialUrl: 'https://www.mcm.edu.cn/',
+    fullText: [
+      '各参赛队伍：因报名系统维护，经竞赛组委会研究决定，校内选拔报名截止时间由11月10日23:59再次顺延至11月12日23:59。',
+      '已完成报名的队伍无需重复提交，报名信息以系统记录为准。系统维护期间无法登录，请错峰提交。',
+      '培训与考场安排将根据最终报名情况另行通知，请关注教务处与本公众号推送。',
+    ],
   },
   {
     id: 'art-job-dxs',

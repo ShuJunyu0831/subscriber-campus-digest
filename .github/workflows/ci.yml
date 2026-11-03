@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  web:
+    name: 类型检查 · 构建 · Playwright
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      # 只装 Chromium：配置里只有一个浏览器项目，省掉 Firefox/WebKit 的下载时间
+      - name: 安装 Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: 类型检查与生产构建
+        run: npm run build
+
+      - name: 端到端测试
+        run: npm test
+
+      - name: 失败时保留报告
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            test-results
+            playwright-report
+          retention-days: 7

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   ArrowUpRight,
   BellRing,
+  BookOpen,
   Check,
   CircleAlert,
   Clock3,
@@ -82,6 +83,7 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [query, setQuery] = useState('')
   const [expanded, setExpanded] = useState<string | null>(null)
+  const [reader, setReader] = useState<FeedEntry | null>(null)
   const [managerOpen, setManagerOpen] = useState(false)
 
   useEffect(() => { writePreference(READ_KEY, readIds) }, [readIds])
@@ -309,6 +311,7 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
                           <div className="feed-detail">
                             <div className="feed-keywords">{entry.article.keywords.map(keyword => <span key={keyword}>#{keyword}</span>)}</div>
                             <div className="feed-detail-actions">
+                              <button type="button" className="text-button" onClick={() => setReader(entry)}><BookOpen size={13} />阅读全文</button>
                               {entry.article.officialUrl && <a href={entry.article.officialUrl} target="_blank" rel="noopener noreferrer">查看原文<ArrowUpRight size={13} /></a>}
                               <button type="button" className="text-button" onClick={() => setReadIds(current => current.filter(id => id !== entry.article.id))}>标记为未读</button>
                             </div>
@@ -365,6 +368,41 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
               </div>
             </div>
             <div className="modal-actions"><span className="ai-note"><Info size={14} />取消订阅不会删除已入库的信息</span><button className="button primary" onClick={() => setManagerOpen(false)}>完成</button></div>
+          </section>
+        </div>
+      )}
+
+      {reader && (
+        <div className="modal-backdrop" onMouseDown={() => setReader(null)}>
+          <section className="modal modal-wide article-reader" role="dialog" aria-modal="true" aria-label="文章全文预览" onMouseDown={event => event.stopPropagation()}>
+            <div className="modal-header">
+              <div><span className="eyebrow">ARTICLE READER · 演示全文</span><h2>{reader.article.title}</h2></div>
+              <button type="button" className="icon-button" aria-label="关闭" onClick={() => setReader(null)}><X size={20} /></button>
+            </div>
+            <div className="modal-body reader-body">
+              <div className="reader-meta">
+                <span className="account-avatar" style={{ background: reader.account.accent }}>{reader.account.avatar}</span>
+                <div>
+                  <strong>{reader.account.name}</strong>
+                  <small>{formatArticleTime(reader.article.publishedAt)} · 约 {reader.article.readMinutes} 分钟 · {reader.account.trustLabel}</small>
+                </div>
+                {reader.article.deadline && <span className="reader-deadline"><Clock3 size={12} />{reader.article.deadline} 截止</span>}
+              </div>
+              {reader.article.fullText
+                ? <div className="reader-text">{reader.article.fullText.map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div>
+                : <div className="reader-empty"><Info size={17} /><p><strong>这篇只有摘要</strong><span>演示数据未收录本篇全文，正式版会在获得授权后读取公众号原文。</span></p></div>}
+              <div className="feed-keywords">{reader.article.keywords.map(keyword => <span key={keyword}>#{keyword}</span>)}</div>
+              <p className="reader-note"><ShieldCheck size={13} />演示全文仅用于展示阅读体验，不代表真实公众号内容；正文以原文链接为准。</p>
+            </div>
+            <div className="modal-actions">
+              {reader.article.officialUrl && <a className="button secondary" href={reader.article.officialUrl} target="_blank" rel="noopener noreferrer">原文链接<ArrowUpRight size={14} /></a>}
+              <button className="button secondary" onClick={() => setReader(null)}>关闭</button>
+              <button
+                className="button primary"
+                disabled={reader.relation === 'duplicate' || reader.relation === 'outdated'}
+                onClick={() => { importEntry(reader); setReader(null) }}
+              >{reader.relation === 'new' ? <><Plus size={14} />加入信息库</> : reader.relation === 'update' ? <><Sparkles size={14} />合并为最新版本</> : <><Check size={14} />已在信息库</>}</button>
+            </div>
           </section>
         </div>
       )}
