@@ -8,11 +8,12 @@
 ## 一、一句话现状
 
 Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 GitHub 私有仓库，
-`npm test` **12 组 Playwright 全绿**、`npm run build` 通过。
+`npm test` **13 组 Playwright 全绿**、`npm run build` 通过。
 
 本轮（11-03）补齐了四件事：**信息分类/版本/去重引擎、公众号订阅、赛事官网一键入口、右下角模型选择**；
-随后打通了 **P0 真实数据链路**（`npm run collect` 官网直采 + 快照 + 桌面版实时抓取，详见待办区 P0）。
-仍然没做的是：模型真实调用（P2，需密钥）、公众号真实订阅源（P1）。
+随后打通了 **P0 真实数据链路**（`npm run collect` 官网直采 + 快照 + 桌面版实时抓取，详见待办区 P0）
+和 **P2 模型真实路由**（`src/llmClient.ts` + LlmPicker 凭据区 + 导入真实调用 + Playwright mock 验证，详见待办区 P2）。
+仍然没做的是：公众号真实订阅源（P1）。
 
 ---
 
@@ -23,7 +24,7 @@ Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 
 ```bash
 npm install
 npm run dev              # 开发：http://127.0.0.1:5173
-npm test                 # Web 端 12 组 Playwright（约 35 秒）
+npm test                 # Web 端 13 组 Playwright（约 35 秒）
 npm run build            # 类型检查 + 生产构建
 npm run collect          # 真实抓取竞赛官网 → src/live/competitions.json + 桌面版采集器
 
@@ -185,9 +186,18 @@ tests/prototype.spec.ts   12 组 Playwright 用例
 - 下一步扩源：在 `LIVE_SOURCES` 数组加一个对象即可（需要该站点是服务端渲染 + 列表链接有固定特征）。
 - 公众号：微信无第三方读取接口，保持演示数据（已在 README 与界面明确标注），待用户授权 RSS 凭据后替换 `accountArticles`。
 
-**P2 — 模型真实路由**
-- `llmModels.ts` 的 id 映射到各厂商模型名；按模型能力（长文本/推理）分配任务。
-- 需要额度控制、超时重试、隐私提示（微信文本上云前仍需逐次确认）。
+**P2 — 模型真实路由（已打通，2026-11-03）**
+- `src/llmClient.ts`：凭据读写（localStorage `subscriber-llm-credentials`，只存本机）+
+  `summarizeWithLlm()`（OpenAI 兼容 `POST {baseUrl}/chat/completions`，30s 超时，要求返回 JSON
+  summary/keyPoints/deadline/evidence；解析失败整段当摘要，诚实兜底）。
+- `src/llmModels.ts`：`VENDOR_ENDPOINTS` 预设 9 家国内厂商的 baseUrl/apiModel/keyUrl（deepseek/qwen/kimi/glm/doubao/minimax/ernie/spark/hunyuan）。
+- `LlmPicker.tsx`：面板底部「接入真实模型（可选）」设置区——厂商下拉（自动预填接口地址与模型名，可改）、
+  API Key 密码框、「保存并接入 / 清除接入」，已接入后面板徽标从「演示选择」变「已接入」。
+- `App.tsx` ImportModal：tab=text 且有凭据时真实调用（成功→条目写入模型摘要与原文摘录，
+  标签「将由 X 整理 · 真实调用」；失败→toast 提示并回落 1200ms 模拟整理）；file/link 仍是模拟。
+- 测试：`tests/prototype.spec.ts` 新增用例用 `page.route('**/chat/completions*')` mock 厂商接口
+  （含 CORS 预检处理），验证凭据保存→导入真实调用→信息库出现模型摘要（13 组全绿）。
+- 剩余：模型输出仍需「待核对」心智；微信文本上云的逐次确认沿用现有弹窗，额度控制/重试未做。
 
 **P3 — 安装包与签名**
 - NSIS 安装包在本机仍可能因目录重命名 `EPERM` 失败；换干净机器可直接跑 `npm run desktop:build`。

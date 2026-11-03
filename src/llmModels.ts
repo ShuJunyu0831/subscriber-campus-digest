@@ -13,8 +13,30 @@ export interface LlmModel {
 }
 
 /**
- * 国内常见大模型清单（演示数据）。
- * 只做界面选择与文案展示，不包含任何 API 调用；正式接入时把 id 映射到各厂商的模型名即可。
+ * 各厂商 OpenAI 兼容接入端点与默认 API 模型名。
+ * 端点来自各厂商公开文档，正式使用前请以厂商最新文档为准；用户可在模型面板里修改。
+ */
+export interface VendorEndpoint {
+  baseUrl: string
+  apiModel: string
+  keyUrl: string
+}
+
+export const VENDOR_ENDPOINTS: Record<string, VendorEndpoint> = {
+  deepseek: { baseUrl: 'https://api.deepseek.com/v1', apiModel: 'deepseek-chat', keyUrl: 'https://platform.deepseek.com/' },
+  qwen: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', apiModel: 'qwen-plus', keyUrl: 'https://bailian.console.aliyun.com/' },
+  kimi: { baseUrl: 'https://api.moonshot.cn/v1', apiModel: 'moonshot-v1-8k', keyUrl: 'https://platform.moonshot.cn/' },
+  glm: { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', apiModel: 'glm-4-air', keyUrl: 'https://open.bigmodel.cn/' },
+  doubao: { baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', apiModel: 'doubao-seed-1-6-250615', keyUrl: 'https://console.volcengine.com/ark/' },
+  minimax: { baseUrl: 'https://api.minimaxi.com/v1', apiModel: 'MiniMax-Text-01', keyUrl: 'https://platform.minimaxi.com/' },
+  ernie: { baseUrl: 'https://qianfan.baidubce.com/v2', apiModel: 'ernie-4.5-turbo-128k', keyUrl: 'https://console.bce.baidu.com/qianfan/' },
+  spark: { baseUrl: 'https://spark-api-open.xf-yun.com/v1', apiModel: 'generalv3.5', keyUrl: 'https://console.xfyun.cn/' },
+  hunyuan: { baseUrl: 'https://api.hunyuan.cloud.tencent.com/v1', apiModel: 'hunyuan-turbos-latest', keyUrl: 'https://console.cloud.tencent.com/hunyuan/' },
+}
+
+/**
+ * 国内常见大模型清单。
+ * P2：id 映射到各厂商的 API 模型名（VENDOR_ENDPOINTS），接入真实调用。
  */
 export const llmModels: LlmModel[] = [
   {

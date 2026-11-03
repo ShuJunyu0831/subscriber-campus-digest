@@ -1,16 +1,36 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, Cpu, Sparkles, X } from 'lucide-react'
-import { groupModels, resolveModel } from './llmModels'
+import { Check, ChevronDown, ExternalLink, KeyRound, Cpu, Sparkles, X } from 'lucide-react'
+import { groupModels, llmModels, resolveModel, VENDOR_ENDPOINTS } from './llmModels'
+import { clearCredentials, readCredentials, saveCredentials, type LlmCredentials } from './llmClient'
+
+/** 厂商下拉选项，按 llmModels 里出现的先后排序。 */
+const vendorOptions: { key: string; label: string }[] = []
+for (const model of llmModels) {
+  if (VENDOR_ENDPOINTS[model.vendorKey] && !vendorOptions.some(option => option.key === model.vendorKey)) {
+    vendorOptions.push({ key: model.vendorKey, label: model.vendor })
+  }
+}
+
+function vendorLabel(key: string): string {
+  return vendorOptions.find(option => option.key === key)?.label ?? key
+}
 
 /**
  * 右下角模型选择器。
- * 只改变界面上的“将使用哪个模型”标签，不会发起任何真实请求；选择结果存在 localStorage。
+ * 未接入时只改变界面标签；在面板里保存 API Key 后，导入粘贴文字会真实调用所选厂商接口。
+ * Key 只存本机 localStorage，不会同步或上传。
  */
 export default function LlmPicker({ value, onChange }: {
   value: string
   onChange: (id: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [credentials, setCredentials] = useState<LlmCredentials | null>(() => readCredentials())
+  const [vendorKey, setVendorKey] = useState(() => readCredentials()?.vendorKey ?? 'deepseek')
+  const [apiKey, setApiKey] = useState(() => readCredentials()?.apiKey ?? '')
+  const [baseUrl, setBaseUrl] = useState(() => readCredentials()?.baseUrl ?? VENDOR_ENDPOINTS.deepseek.baseUrl)
+  const [apiModel, setApiModel] = useState(() => readCredentials()?.apiModel ?? VENDOR_ENDPOINTS.deepseek.apiModel)
   const rootRef = useRef<HTMLDivElement | null>(null)
   const current = resolveModel(value)
   const groups = groupModels()
@@ -31,18 +51,48 @@ export default function LlmPicker({ value, onChange }: {
     }
   }, [open])
 
+  const pickVendor = (key: string) => {
+    setVendorKey(key)
+    const preset = VENDOR_ENDPOINTS[key]
+    if (preset) {
+      setBaseUrl(preset.baseUrl)
+      setApiModel(preset.apiModel)
+    }
+  }
+
+  const connect = () => {
+    if (!apiKey.trim()) return
+    saveCredentials({
+      vendorKey,
+      apiKey: apiKey.trim(),
+      baseUrl: baseUrl.trim() || VENDOR_ENDPOINTS[vendorKey]?.baseUrl || '',
+      apiModel: apiModel.trim() || VENDOR_ENDPOINTS[vendorKey]?.apiModel || '',
+    })
+    setCredentials(readCredentials())
+  }
+
+  const disconnect = () => {
+    clearCredentials()
+    setCredentials(null)
+    setApiKey('')
+  }
+
   return (
     <div className="llm-dock" ref={rootRef}>
       {open && (
         <section className="llm-panel" role="dialog" aria-label="选择分析模型">
           <header className="llm-panel-head">
             <div>
-              <span className="eyebrow">MODEL ROUTER · 演示</span>
+              <span className="eyebrow">MODEL ROUTER · {credentials ? '已接入' : '演示'}</span>
               <h3>选择用哪个模型分析</h3>
             </div>
             <button type="button" className="icon-button" aria-label="收起模型列表" onClick={() => setOpen(false)}><X size={17} /></button>
           </header>
-          <p className="llm-panel-note"><Sparkles size={13} />仅切换界面标签，本原型不会向任何厂商发送请求。</p>
+          <p className="llm-panel-note">
+            {credentials
+              ? <>已接入 {vendorLabel(credentials.vendorKey)}：导入粘贴文字时将真实调用所选模型接口。</>
+              : <><Sparkles size={13} />演示模式仅切换界面标签；保存 API Key 后，导入粘贴文字会真实调用所选模型。</>}
+          </p>
           <div className="llm-groups">
             {groups.map(group => (
               <div className="llm-group" key={group.vendorKey}>
@@ -70,9 +120,51 @@ export default function LlmPicker({ value, onChange }: {
               </div>
             ))}
           </div>
+          <div className="llm-connect">
+            <button
+              type="button"
+              className="llm-connect-toggle"
+              aria-expanded={settingsOpen}
+              onClick={() => setSettingsOpen(state => !state)}
+            >
+              <KeyRound size={13} />
+              {credentials ? `已接入 ${vendorLabel(credentials.vendorKey)} · 真实调用` : '接入真实模型（可选）'}
+              <ChevronDown size={13} className={settingsOpen ? 'up' : ''} />
+            </button>
+            {settingsOpen && (
+              <div className="llm-connect-form">
+                <label className="llm-connect-row">
+                  <span>厂商</span>
+                  <select value={vendorKey} onChange={event => pickVendor(event.target.value)}>
+                    {vendorOptions.map(option => <option key={option.key} value={option.key}>{option.label}</option>)}
+                  </select>
+                  {VENDOR_ENDPOINTS[vendorKey] && (
+                    <a href={VENDOR_ENDPOINTS[vendorKey].keyUrl} target="_blank" rel="noreferrer">获取 Key<ExternalLink size={11} /></a>
+                  )}
+                </label>
+                <label className="llm-connect-row">
+                  <span>API Key</span>
+                  <input type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder="sk-…" autoComplete="off" />
+                </label>
+                <label className="llm-connect-row">
+                  <span>接口地址</span>
+                  <input value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder="https://…/v1" />
+                </label>
+                <label className="llm-connect-row">
+                  <span>模型名</span>
+                  <input value={apiModel} onChange={event => setApiModel(event.target.value)} placeholder="deepseek-chat" />
+                </label>
+                <div className="llm-connect-actions">
+                  <button type="button" className="llm-connect-save" onClick={connect} disabled={!apiKey.trim()}>保存并接入</button>
+                  <button type="button" className="llm-connect-clear" onClick={disconnect} disabled={!credentials}>清除接入</button>
+                </div>
+                <small>Key 只保存在本机浏览器，仅在你导入粘贴文字时调用所选厂商接口，不会随数据同步。</small>
+              </div>
+            )}
+          </div>
           <footer className="llm-panel-foot">
             <span><Cpu size={13} />当前：{current.vendor} · {current.name}</span>
-            <span className="demo-label">演示选择</span>
+            {credentials ? <span className="connected-label">已接入</span> : <span className="demo-label">演示选择</span>}
           </footer>
         </section>
       )}

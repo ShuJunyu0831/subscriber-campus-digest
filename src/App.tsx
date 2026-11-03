@@ -48,6 +48,7 @@ import WechatInbox from './WechatInbox'
 import LlmPicker from './LlmPicker'
 import TaxonomyModal from './TaxonomyModal'
 import { DEFAULT_MODEL_ID, resolveModel } from './llmModels'
+import { readCredentials, summarizeWithLlm } from './llmClient'
 import { readPreference, writePreference } from './localStore'
 
 const navItems: { id: View; label: string; icon: typeof Inbox }[] = [
@@ -208,7 +209,11 @@ function ImportModal({ onClose, onAdd, notify, modelName }: {
   const [error, setError] = useState('')
   const [processing, setProcessing] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+  const abortRef = useRef<AbortController | null>(null)
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current)
+    abortRef.current?.abort()
+  }, [])
 
   // 输入内容一变就给出分类建议，让「系统怎么判断的」在导入时也可见
   const guess = useMemo(() => {
@@ -226,12 +231,42 @@ function ImportModal({ onClose, onAdd, notify, modelName }: {
     setFile(selected)
   }
 
-  const submit = () => {
+  const submit = async () => {
     if (tab === 'text' && !text.trim()) { setError('请先粘贴需要整理的文字。'); return }
     if (tab === 'link' && !/^https?:\/\/.+/.test(link.trim())) { setError('请输入以 http:// 或 https:// 开头的公开链接。'); return }
     if (tab === 'file' && !file) { setError('请选择一个需要解析的文件。'); return }
     setError('')
     setProcessing(true)
+
+    // P2：粘贴文字且已保存凭据时，真实调用所选厂商的 OpenAI 兼容接口
+    const credentials = tab === 'text' ? readCredentials() : null
+    if (credentials) {
+      const controller = new AbortController()
+      abortRef.current = controller
+      try {
+        const summary = await summarizeWithLlm(text, credentials, controller.signal)
+        const title = text.trim().split(/[\n。！？]/)[0].slice(0, 38) || '新导入的信息'
+        const result = onAdd({
+          title,
+          category,
+          source: '手动粘贴 · 真实模型整理',
+          summary: summary.summary,
+          evidence: summary.evidence ?? '模型未返回原文摘录，请对照原文人工核对。',
+          keyPoints: summary.keyPoints.length > 0 ? summary.keyPoints : ['核对原始来源与发布时间', '确认关键日期与参与要求'],
+          deadline: summary.deadline ?? (category === '竞赛' ? '日期待核对' : undefined),
+          tags: [category, '模型整理'],
+        })
+        if (!result.ok) { setProcessing(false); return }
+        notify(`已通过 ${modelName} 完成真实整理`)
+        onClose()
+        return
+      } catch (requestError) {
+        if (controller.signal.aborted) { setProcessing(false); return }
+        const message = requestError instanceof Error ? requestError.message : String(requestError)
+        notify(`真实模型调用失败，已用演示整理兜底：${message}`)
+      }
+    }
+
     timer.current = setTimeout(() => {
       const title = tab === 'file' && file ? file.name.replace(/\.[^.]+$/, '') : tab === 'link' ? '公开链接导入的竞赛信息' : text.trim().split(/[\n。！？]/)[0].slice(0, 38) || '新导入的信息'
       const source = tab === 'file' ? '本地上传 · 按需解析' : tab === 'link' ? '公开链接 · 用户导入' : '手动粘贴 · 用户导入'
@@ -282,9 +317,9 @@ function ImportModal({ onClose, onAdd, notify, modelName }: {
         {error && <p className="form-error"><CircleAlert size={15} />{error}</p>}
       </div>
       <div className="modal-actions">
-        <span className="ai-note"><Cpu size={14} />将由 {modelName} 整理 · 演示</span>
+        <span className="ai-note"><Cpu size={14} />将由 {modelName} 整理 · {tab === 'text' && readCredentials() ? '真实调用' : '演示'}</span>
         <button className="button secondary" onClick={onClose} disabled={processing}>取消</button>
-        <button className="button primary" onClick={submit} disabled={processing}>{processing ? <><LoaderCircle className="spin" size={17} />正在模拟整理</> : <><Sparkles size={17} />开始整理</>}</button>
+        <button className="button primary" onClick={submit} disabled={processing}>{processing ? <><LoaderCircle className="spin" size={17} />{tab === 'text' && readCredentials() ? '正在调用模型' : '正在模拟整理'}</> : <><Sparkles size={17} />开始整理</>}</button>
       </div>
     </ModalShell>
   )

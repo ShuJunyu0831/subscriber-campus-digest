@@ -48,6 +48,67 @@ test('手动导入校验并生成模拟条目', async ({ page }) => {
   await expect(page.locator('.library-list')).toContainText('全国大学生软件创新大赛报名通知')
 })
 
+test('接入真实模型后粘贴文字调用 OpenAI 兼容接口（mock 验证）', async ({ page }) => {
+  let apiCalls = 0
+  await page.route('**/chat/completions*', async route => {
+    const request = route.request()
+    if (request.method() === 'OPTIONS') {
+      await route.fulfill({
+        status: 204,
+        headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'authorization, content-type' },
+      })
+      return
+    }
+    apiCalls += 1
+    const body = request.postDataJSON() as { model?: string; messages?: { role: string; content: string }[] }
+    expect(body?.model).toContain('deepseek')
+    const userText = body?.messages?.find(message => message.role === 'user')?.content ?? ''
+    expect(userText).toContain('数学建模')
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify({
+        choices: [{
+          message: {
+            role: 'assistant',
+            content: JSON.stringify({
+              summary: '校内数学建模选拔赛开始报名，11月20日截止组队。',
+              keyPoints: ['面向全校本科生开放', '11月20日报名截止', '需三人组队参赛'],
+              deadline: '11月20日',
+              evidence: '报名截止时间为11月20日。',
+            }),
+          },
+        }],
+      }),
+    })
+  })
+
+  // 在模型面板里保存凭据（只写本机 localStorage）
+  await openHome(page)
+  await page.locator('.llm-trigger').click()
+  const panel = page.getByRole('dialog', { name: '选择分析模型' })
+  await panel.getByRole('button', { name: /接入真实模型/ }).click()
+  await panel.getByLabel('API Key').fill('sk-test-prototype')
+  await panel.getByRole('button', { name: '保存并接入' }).click()
+  await expect(panel).toContainText('已接入')
+  await page.locator('.llm-trigger').click()
+
+  // 粘贴文字导入 → 走真实接口而非模拟
+  await page.getByRole('button', { name: '导入新信息' }).click()
+  const modal = page.getByRole('dialog', { name: '导入一条信息' })
+  await expect(modal).toContainText('真实调用')
+  await modal.locator('textarea').fill('2026 年校内数学建模选拔报名通知\n报名截止时间为11月20日。')
+  await modal.getByRole('button', { name: '开始整理' }).click()
+  await expect(modal).toBeHidden()
+  expect(apiCalls).toBe(1)
+
+  // 信息库里出现的是模型返回的摘要，而不是演示文案
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  await expect(page.locator('.library-list')).toContainText('校内数学建模选拔赛开始报名')
+  await expect(page.locator('.library-list')).not.toContainText('这是原型生成的模拟摘要')
+})
+
 test('公开检索防止重复订阅且重开后保留已订阅状态', async ({ page }) => {
   await openHome(page)
   await page.locator('.discover-button').click()
