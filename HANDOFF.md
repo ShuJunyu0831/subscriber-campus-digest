@@ -404,6 +404,8 @@ F. 导出格式的拆分修复（`shareImport.ts`）
 | `asar.createPackage` | 是**异步**的。不 `await` 会写出半截文件。 |
 | asar 写入 | 往已存在文件写会追加，打包脚本已做原地截断。 |
 | `Compress-Archive` | 对 `resources/app.asar` 会报占用；先 `cp` 到 `%TEMP%` 再压缩。 |
+| 打 zip 的正解 | 用 `node_modules/electron-winstaller/vendor/7z.exe a -tzip -mx=3 -mmt=on 目标.zip Subscriber`（在 `desktop-dist` 里执行，条目自带 `Subscriber/` 前缀）。python `zipfile` 压 250 MB 的 exe 会被环境半路 SIGTERM，留下半截包（114 MB）且不报错；7z 几秒完成。打完用 7z 解一个 `app.asar` 出来对 md5，比只看大小可靠。 |
+| PS 压缩受限 | `Add-Type` 与 `Reflection.Assembly` 加载都被安全策略拦，`System.IO.Compression.ZipFile` 用不了。别在这条路上耗时间，直接用上面的 7z。 |
 | `Add-Type` | 被安全策略拦截。 |
 | `ELECTRON_RUN_AS_NODE` | 宿主终端会导出该变量，导致 electron 退化成 Node；`launch.cjs` 与验证脚本都会先删。 |
 | Electron 二进制 | 若 `node_modules/electron/dist` 为空：`ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ node node_modules/electron/install.js`。 |
