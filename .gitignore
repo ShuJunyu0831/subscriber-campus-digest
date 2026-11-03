@@ -7,6 +7,9 @@ release/
 desktop-dist/
 build/icon.ico
 tsconfig.tsbuildinfo
+.tmp-collect/
+# 桌面版实时采集器（npm run collect 生成，electron/live/ 目录其余内容手工维护）
+electron/live/
 
 # 测试与截图
 test-results/

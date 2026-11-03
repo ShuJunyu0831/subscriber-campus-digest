@@ -656,6 +656,9 @@ html { scrollbar-width: thin; scrollbar-color: rgba(45, 98, 82, .28) transparent
   border: 1px solid #dfe7df; background: #f2f6f1; color: #55705f; font-size: 9px; font-weight: 650; white-space: nowrap;
 }
 .insight-chip:hover { border-color: #b7cbbd; color: var(--accent); background: #edf3ee; }
+/* 官网直采徽标：青绿色调，与「自动合并」统计区分，表示这条数据来自真实官网 */
+.live-chip { border-color: #cfe3e0; background: #eef6f4; color: #4e7a72; cursor: default; }
+.live-chip:hover { border-color: #b3d4cf; color: #3d6a61; background: #e7f2f0; }
 .toolbar-insights .text-button { white-space: nowrap; }
 .library-toolbar .result-total { margin-left: 10px; }
 

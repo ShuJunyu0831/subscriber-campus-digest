@@ -36,8 +36,10 @@ import {
   Trophy,
   Upload,
   X,
+  Globe,
 } from 'lucide-react'
 import { categoryMeta, initialItems, type AddItemResult, type Category, type InfoItem, type NewItemInput, type View } from './data'
+import { buildLiveItems, currentFetchedAt, formatFetchedAt, liveSnapshot, setLiveFetchedAt } from './liveSnapshot'
 import { classifyLibrary, deadlineDays, deadlineLabel, findExistingItem, inferCategory, STATUS_LABEL, type Classification } from './classify'
 import { officialAccounts, type AccountArticle } from './accounts'
 import GradientASCII from './GradientASCII'
@@ -392,15 +394,17 @@ function DetailDrawer({ entry, onClose, onFavorite, onLike, onComplete, notify }
             </dl>
           </section>
 
-          <section className="evidence-section"><div className="evidence-title"><BookOpen size={16} /><h3>原文依据</h3></div><blockquote>{item.evidence}</blockquote><p>重要日期请以原始通知为准</p></section>
+          <section className="evidence-section"><div className="evidence-title"><BookOpen size={16} /><h3>原文依据</h3></div><blockquote>{item.evidence}</blockquote><p>重要日期请以原始通知为准{item.liveSourceId ? <>，本条来自官网自动采集（{formatFetchedAt(currentFetchedAt())}）</> : ''}</p></section>
           <div className="tag-list">{item.tags.map(tag => <span key={tag}>#{tag}</span>)}</div>
         </div>
         <div className="drawer-footer">
           <div><strong>{item.source}</strong><span>{item.publishedAt}</span></div>
           <div className="drawer-footer-actions">
-            <button className="button secondary" onClick={() => notify('原型保留原文入口，正式版将跳转到原始页面')}>查看原文</button>
             {item.officialUrl
-              ? <a className="button primary" href={item.officialUrl} target="_blank" rel="noopener noreferrer">赛事官网<ArrowUpRight size={15} /></a>
+              ? <a className="button secondary" href={item.officialUrl} target="_blank" rel="noopener noreferrer">查看原文<ArrowUpRight size={15} /></a>
+              : <button className="button secondary" onClick={() => notify('原型保留原文入口，正式版将跳转到原始页面')}>查看原文</button>}
+            {(item.officialHome ?? item.officialUrl)
+              ? <a className="button primary" href={item.officialHome ?? item.officialUrl} target="_blank" rel="noopener noreferrer">赛事官网<ArrowUpRight size={15} /></a>
               : item.category === '竞赛' ? <button className="button secondary" disabled title="尚未核实到官网入口">官网待核对</button> : null}
           </div>
         </div>
@@ -446,8 +450,8 @@ function DigestModal({ items, stats, modelName, onClose, onOpenItem, notify }: {
 
 export default function App() {
   const [view, setView] = useState<View>('today')
-  const [items, setItems] = useState<InfoItem[]>(initialItems)
-  const itemsRef = useRef<InfoItem[]>(initialItems)
+  const [items, setItems] = useState<InfoItem[]>(() => [...initialItems, ...buildLiveItems()])
+  const itemsRef = useRef<InfoItem[]>(items)
   const idRef = useRef(Date.now())
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [importOpen, setImportOpen] = useState(false)
@@ -543,7 +547,9 @@ export default function App() {
       eligibility: input.eligibility ?? base?.eligibility,
       organizer: input.organizer ?? base?.organizer,
       officialUrl: input.officialUrl ?? base?.officialUrl,
+      officialHome: input.officialHome ?? base?.officialHome,
       eventKey: input.eventKey ?? base?.eventKey,
+      liveSourceId: input.liveSourceId ?? base?.liveSourceId,
       tags: input.tags ?? base?.tags ?? [input.category, '待核对'],
       favorite: base?.favorite ?? false,
       liked: false,
@@ -581,6 +587,30 @@ export default function App() {
     }, { mode: mode === 'update' ? 'version' : 'new' })
     if (result.ok) notify(mode === 'update' ? '已合并为最新版本，旧版本保留在版本记录中' : '已加入信息库')
   }, [addItem, notify])
+
+  /** 桌面版：主进程实时抓取竞赛官网并合并入库（Web 端受跨域限制，提示改用快照）。 */
+  const canRefreshLive = typeof window !== 'undefined' && Boolean(window.subscriberDesktop?.fetchLive)
+  const [liveRefreshing, setLiveRefreshing] = useState(false)
+  const refreshLive = useCallback(async () => {
+    const fetchLive = window.subscriberDesktop?.fetchLive
+    if (!fetchLive || liveRefreshing) return
+    setLiveRefreshing(true)
+    try {
+      const result = await fetchLive()
+      if (!result.ok || !result.report) {
+        notify(result.message)
+        return
+      }
+      let added = 0
+      for (const input of result.report.items) {
+        if (addItem(input, { mode: 'new' }).ok) added += 1
+      }
+      setLiveFetchedAt(result.report.fetchedAt)
+      notify(added > 0 ? `${result.message}，其中 ${added} 条新入库` : `${result.message}，均已在库`)
+    } finally {
+      setLiveRefreshing(false)
+    }
+  }, [addItem, notify, liveRefreshing])
 
   const filteredItems = useMemo(() => visibleItems.filter(item => {
     const matchView = view === 'favorites' ? item.favorite : view === 'review' ? item.completed : true
@@ -686,6 +716,8 @@ export default function App() {
               <div className="filter-tabs">{(['全部', '竞赛', '新闻', '课程通知'] as const).map(item => <button key={item} className={filter === item ? 'active' : ''} onClick={() => setFilter(item)}>{item}<span>{item === '全部' ? visibleItems.filter(i => view === 'library' || i.favorite).length : visibleItems.filter(i => (view === 'library' || i.favorite) && i.category === item).length}</span></button>)}</div>
               <div className="toolbar-insights">
                 <button type="button" className="insight-chip" onClick={() => setTaxonomyOpen(true)}><Layers3 size={13} />{library.stats.merged > 0 ? `已自动合并 ${library.stats.merged} 条` : '未发现重复'}{library.stats.versionGroups > 0 ? ` · ${library.stats.versionGroups} 组版本` : ''}</button>
+                <span className="insight-chip live-chip" title="数据来自竞赛官网真实抓取，明细见各条目的「查看原文」"><Globe size={13} />官网直采 {liveSnapshot.items.length} 条 · 抓取于 {formatFetchedAt(currentFetchedAt())}</span>
+                {canRefreshLive && <button type="button" className="text-button" onClick={refreshLive} disabled={liveRefreshing}>{liveRefreshing ? <LoaderCircle className="spin" size={13} /> : <Globe size={13} />}{liveRefreshing ? '抓取中…' : '实时抓取官网'}<ArrowUpRight size={13} /></button>}
                 <button type="button" className="text-button" onClick={() => setTaxonomyOpen(true)}>分类规则<ArrowUpRight size={13} /></button>
               </div>
               <span className="result-total">{filteredItems.length} 条结果</span>

@@ -1,5 +1,5 @@
 export type Category = '竞赛' | '新闻' | '课程通知'
-export type SourceType = '公开检索' | '用户导入' | '公众号订阅'
+export type SourceType = '官网直采' | '公开检索' | '用户导入' | '公众号订阅'
 export type View = 'today' | 'library' | 'favorites' | 'review' | 'wechat'
 
 export interface InfoItem {
@@ -21,8 +21,12 @@ export interface InfoItem {
   organizer?: string
   /** 可核实的赛事官网；没有把握时留空，界面显示“官网待核对”。 */
   officialUrl?: string
+  /** 官网首页（官网直采条目用），与具体公告页区分。 */
+  officialHome?: string
   /** 同一件事的稳定标识，跨来源合并与版本归并都靠它。 */
   eventKey?: string
+  /** 采集自哪个官网源（LIVE_SOURCES.id），用于界面标注与来源追溯。 */
+  liveSourceId?: string
   tags: string[]
   favorite: boolean
   liked: boolean
@@ -50,7 +54,11 @@ export interface NewItemInput {
   eligibility?: string
   organizer?: string
   officialUrl?: string
+  /** 官网首页（官网直采条目用），与具体公告页区分。 */
+  officialHome?: string
   eventKey?: string
+  /** 采集自哪个官网源（LIVE_SOURCES.id），用于界面标注与来源追溯。 */
+  liveSourceId?: string
   tags?: string[]
   evidence?: string
   keyPoints?: string[]

@@ -8,13 +8,14 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "playwright test",
+    "collect": "node scripts/collect.mjs",
     "desktop": "npm run build && node electron/launch.cjs",
     "desktop:dev": "node electron/launch.cjs --dev",
     "desktop:icon": "node electron/make-icon.cjs",
     "desktop:verify": "node electron/verify-package.mjs",
-    "desktop:pack": "npm run build && electron-builder --win --dir",
-    "desktop:build": "npm run build && electron-builder --win",
-    "desktop:portable": "npm run build && node electron/build-portable.cjs"
+    "desktop:pack": "npm run collect -- --lenient && npm run build && electron-builder --win --dir",
+    "desktop:build": "npm run collect -- --lenient && npm run build && electron-builder --win",
+    "desktop:portable": "npm run collect -- --lenient && npm run build && node electron/build-portable.cjs"
   },
   "dependencies": {
     "@gsap/react": "^2.1.2",

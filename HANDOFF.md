@@ -10,8 +10,9 @@
 Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 GitHub 私有仓库，
 `npm test` **12 组 Playwright 全绿**、`npm run build` 通过。
 
-本轮（11-03）补齐了四件事：**信息分类/版本/去重引擎、公众号订阅、赛事官网一键入口、右下角模型选择**。
-仍然没做的是真实数据链路 —— 信息库条目、公众号文章、模型调用全部是演示数据。
+本轮（11-03）补齐了四件事：**信息分类/版本/去重引擎、公众号订阅、赛事官网一键入口、右下角模型选择**；
+随后打通了 **P0 真实数据链路**（`npm run collect` 官网直采 + 快照 + 桌面版实时抓取，详见待办区 P0）。
+仍然没做的是：模型真实调用（P2，需密钥）、公众号真实订阅源（P1）。
 
 ---
 
@@ -24,9 +25,10 @@ npm install
 npm run dev              # 开发：http://127.0.0.1:5173
 npm test                 # Web 端 12 组 Playwright（约 35 秒）
 npm run build            # 类型检查 + 生产构建
+npm run collect          # 真实抓取竞赛官网 → src/live/competitions.json + 桌面版采集器
 
 npm run desktop          # 直接以 Electron 运行
-npm run desktop:portable # 重新打免安装包 → desktop-dist/Subscriber
+npm run desktop:portable # 重新打免安装包 → desktop-dist/Subscriber（会先 collect --lenient）
 npm run desktop:verify   # 拉起打包后的 exe 跑 13 项检查
 ```
 
@@ -108,6 +110,9 @@ npm run desktop:verify   # 拉起打包后的 exe 跑 13 项检查
 src/
   App.tsx             主界面：顶栏、内容层、5 个页面、摘要弹框、卡片与详情抽屉
   classify.ts         分类引擎（指纹/相似度/聚类/版本/去重/时效/分类打分）
+  liveSource.ts       官网直采核心（LIVE_SOURCES 源定义、列表/详情解析、截止时间候选）
+  liveSnapshot.ts     快照 → InfoItem 转换、抓取时间展示
+  live/competitions.json  真实抓取快照（npm run collect 产出，提交入库）
   accounts.ts         公众号与文章演示数据、可信度等级
   AccountFeed.tsx     公众号订阅页（分组、筛选、同步、查重、入库）
   TaxonomyModal.tsx   分类规则与版本记录说明
@@ -119,7 +124,9 @@ src/
   localStore.ts       IndexedDB 本地存储 + `readPreference/writePreference`
   data.ts             演示数据、InfoItem / NewItemInput / AddItemResult 类型
   index.css           全部样式（新功能样式集中在文件末尾）
-electron/             主进程、打包、图标、验证脚本
+scripts/collect.mjs   真实采集脚本（esbuild 打包 liveSource → Node 抓取 → 写快照 + 桌面版采集器）
+electron/             主进程（含 live:fetch IPC）、打包、图标、验证脚本
+electron/live/        collector.cjs（npm run collect 生成，已 gitignore）
 tests/prototype.spec.ts   12 组 Playwright 用例
 ```
 
@@ -156,14 +163,22 @@ tests/prototype.spec.ts   12 组 Playwright 用例
 
 ## 七、待办（按优先级）
 
-**P0 — 接真实数据链路**
-- 现状：`src/data.ts` 与 `src/accounts.ts` 都是演示数据，「上传 → 分析」是模拟的。
-- 下一步：重新走云服务开通授权，把 `localStore.ts` 的上传与分析换成真实调用。
-- 首次要验证的仍是「竞赛截止提醒」链路；分类引擎可以直接复用，不必依赖模型。
+**P0 — 接真实数据链路（竞赛截止提醒链路已打通，2026-11-03）**
+- 已完成：`npm run collect` 从两个真实竞赛官网（mcm.edu.cn 通知公告、tiaozhanbei.net 动态）抓取公告，
+  经 `src/liveSource.ts` 解析 + 分类引擎归一，写出快照 `src/live/competitions.json`（提交入库，当前 10 条）。
+- Web 版启动时把快照并入信息库（`src/liveSnapshot.ts`，id 从 1001 起），卡片来源显示「官网直采」，
+  工具条有「官网直采 N 条 · 抓取于 …」标注；详情抽屉的原文依据会注明自动采集时间。
+- 桌面版额外有实时链路：`electron/main.cjs` 的 `live:fetch` IPC 调用 `electron/live/collector.cjs`
+  （同一份 `liveSource.ts` 的 CJS 打包），preload 暴露 `fetchLive`，信息库工具条出现「实时抓取官网」按钮。
+- 诚实边界：抓到的标题/链接/发布日期/正文摘句都是官网原文；摘要与截止时间是机械提取的，
+  提取不到就留空标「待核对」，绝不编造；校内条目与公众号文章仍是演示数据。
+- 真实数据上验证过的引擎行为：合并 3 条真实重复（研讨会第一次/第二次通知、揭榜挂帅系列文）、版本分组正常。
+- 剩余：`localStore.ts` 的「上传 → 分析」换真实 LLM 调用（P2 一起做，需密钥管理）；公众号真实订阅源归 P1。
 
 **P1 — 真实订阅源**
 - 公众号：接入已授权的 RSS / 开放平台，替换 `accountArticles`，保留 `eventKey` 字段即可复用现有去重与版本逻辑。
-- 竞赛官网：先做 2—3 所学校的固定页面适配器，验证解析稳定性，再谈覆盖面。
+- 竞赛官网：`src/liveSource.ts` 的 `LIVE_SOURCES` 数组加新源即可（已内置 mcm / 挑战杯两个适配器，
+  解析逻辑是通用的：列表页链接模式 + 详情页发布日期/正文摘句/截止时间候选）。
 
 **P2 — 模型真实路由**
 - `llmModels.ts` 的 id 映射到各厂商模型名；按模型能力（长文本/推理）分配任务。

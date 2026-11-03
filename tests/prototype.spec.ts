@@ -148,11 +148,17 @@ test('同一事件的多版本自动归并且只保留最新结论', async ({ pa
   await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
   const first = page.locator('.library-list .info-card').first()
   await expect(first.locator('.version-chip')).toHaveText('V2')
-  await expect(page.locator('.insight-chip')).toContainText('已自动合并 2 条')
-  // 原文与转载只出现一次
-  await expect(page.locator('.library-list .card-main h3').filter({ hasText: '数学建模' })).toHaveCount(1)
+  // 官网直采条目并入后，引擎在真实数据上也会合并重复：合并数不低于演示数据的 2 条
+  const mergeChip = page.locator('.insight-chip').first()
+  await expect(mergeChip).toContainText(/已自动合并 [2-9] 条/)
+  await expect(mergeChip).toContainText('组版本')
+  // 官网直采快照条目已并入信息库，工具条有真实抓取标注
+  await expect(page.locator('.live-chip')).toContainText('官网直采 10 条')
+  await expect(page.locator('.library-list .source-type').filter({ hasText: '官网直采' }).first()).toBeVisible()
+  // 演示事件的原文与转载只出现一次（用唯一的事件词校验，避免与官网直采条目撞标题）
+  await expect(page.locator('.library-list .card-main h3').filter({ hasText: '校内选拔报名' })).toHaveCount(1)
 
-  await page.locator('.insight-chip').click()
+  await page.locator('.insight-chip').first().click()
   const modal = page.getByRole('dialog', { name: '分类与版本规则' })
   await expect(modal).toBeVisible()
   await expect(modal.locator('.taxonomy-group')).toHaveCount(1)

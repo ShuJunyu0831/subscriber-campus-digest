@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell } = require('electron')
+const { app, BrowserWindow, Menu, shell, ipcMain } = require('electron')
 const path = require('node:path')
 
 const DEV_URL = 'http://127.0.0.1:5173'
@@ -6,6 +6,37 @@ const devMode = process.argv.includes('--dev')
 
 /** @type {BrowserWindow | null} */
 let mainWindow = null
+
+// 官网直采采集器（scripts/collect.mjs 打包产出；缺失时返回提示而不是崩溃）
+let liveCollector = null
+function loadLiveCollector() {
+  if (liveCollector !== null) return liveCollector
+  try {
+    // eslint-disable-next-line global-require
+    liveCollector = require('./live/collector.cjs')
+  } catch {
+    liveCollector = false
+  }
+  return liveCollector
+}
+
+ipcMain.handle('live:fetch', async () => {
+  const collector = loadLiveCollector()
+  if (!collector) return { ok: false, message: '官网采集器未打包（需先运行 npm run collect）', report: null }
+  try {
+    const report = await collector.fetchLiveCompetitions()
+    const failed = report.logs.filter(log => !log.ok).map(log => log.source)
+    return {
+      ok: report.items.length > 0,
+      message: report.items.length > 0
+        ? `抓取 ${report.items.length} 条${failed.length ? `（${failed.join('、')} 失败）` : ''}`
+        : '官网没有返回可用条目',
+      report,
+    }
+  } catch (error) {
+    return { ok: false, message: `抓取失败：${error && error.message ? error.message : '未知错误'}`, report: null }
+  }
+})
 
 function resolveIndex() {
   return path.join(__dirname, '..', 'dist', 'index.html')
