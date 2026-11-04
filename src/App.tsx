@@ -1149,6 +1149,15 @@ export default function App() {
   const toggleSelectAll = () => setSelectedIds(allSelected ? new Set() : new Set(filteredItems.map(item => item.id)))
   const exitSelectMode = () => { setSelectMode(false); setSelectedIds(new Set()) }
 
+  /**
+   * 改搜索词、切分类或换排序就清空选择：
+   * 否则筛选后看不见的条目还留在选中集合里，一点「删除选中」会删掉屏幕外的内容。
+   */
+  useEffect(() => {
+    if (!selectMode) return
+    setSelectedIds(current => (current.size > 0 ? new Set() : current))
+  }, [search, filter, sortMode]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const navigate = (next: View) => { setView(next); setSearch(''); setFilter('全部'); setSelectMode(false); setSelectedIds(new Set()); window.scrollTo({ top: 0, behavior: 'smooth' }) }
   const openItem = (item: InfoItem) => setSelectedId(item.id)
   const pageTitle = { today: '今日精选', library: '全部信息', wechat: '消息与订阅', favorites: '我的收藏', review: '完成回顾' }[view]

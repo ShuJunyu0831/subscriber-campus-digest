@@ -97,6 +97,14 @@ test('信息库可以多选删除，撤销后按原顺序恢复', async ({ page 
   await cards.nth(1).getByRole('button', { name: /^选择/ }).click()
   await expect(page.locator('.selection-count')).toContainText('2')
 
+  // 改搜索词会清空选择：否则筛选后被隐藏的条目会跟着一起删掉
+  await page.getByLabel('在信息库中搜索').fill('数学')
+  await expect(page.locator('.selection-count')).toContainText('0')
+  await page.getByLabel('在信息库中搜索').fill('')
+  await cards.nth(0).getByRole('button', { name: /^选择/ }).click()
+  await cards.nth(1).getByRole('button', { name: /^选择/ }).click()
+  await expect(page.locator('.selection-count')).toContainText('2')
+
   // 全选只作用于当前结果，再取消后重新选两条
   await page.getByRole('button', { name: '全选当前结果' }).click()
   await expect(page.locator('.selection-count')).toContainText(String(total))
