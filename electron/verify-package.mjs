@@ -65,10 +65,16 @@ fs.writeFileSync(tempShare, [
   '省赛 11 月 25 日开始报名。',
 ].join('\n'), 'utf8')
 
+const launchArgs = ['--share-file', tempShare]
+// 允许在用户已打开桌面版时用独立 userData 做检验，避免 Chromium 缓存/单实例锁互相抢占。
+if (process.env.SUBSCRIBER_VERIFY_USER_DATA) {
+  launchArgs.push(`--user-data-dir=${process.env.SUBSCRIBER_VERIFY_USER_DATA}`)
+}
+
 const app = await electron.launch({
   executablePath: exePath,
   env,
-  args: ['--share-file', tempShare],
+  args: launchArgs,
 })
 const page = await app.firstWindow()
 
@@ -167,13 +173,9 @@ try {
     bridge.offline?.message
   )
 
-  // 3. 首屏摘要弹框
+  // 3. 外部转发启动时，摘要不能盖住批量导入预览
   const digest = page.getByRole('dialog', { name: '今天，值得关注这些' })
-  await digest.waitFor({ state: 'visible', timeout: 15000 })
-  await digest.getByRole('button', { name: '开始浏览' }).click()
-  await digest.waitFor({ state: 'hidden', timeout: 10000 })
-  check('首屏摘要弹框可打开并关闭', true)
-  await page.screenshot({ path: path.join(shotDir, 'desktop-01-home.png') })
+  check('外部分享启动时不会用首屏摘要遮挡导入预览', !(await digest.isVisible()))
 
   // 2.6 外部转发：启动参数带内容时，应用应自动切到「消息与订阅」并打开批量导入
   const forwardedDialog = page.getByRole('dialog', { name: '批量导入消息' })
@@ -191,6 +193,29 @@ try {
     await forwardedDialog.getByRole('button', { name: '取消' }).click()
     await forwardedDialog.waitFor({ state: 'hidden', timeout: 5000 }).catch(() => {})
   }
+
+  // 3.1 手动打开首屏摘要，确认文案与关闭按钮仍可用
+  await page.locator('.main-nav').getByRole('button', { name: /今日精选/ }).click()
+  await page.getByRole('button', { name: /阅读完整摘要/ }).click()
+  await digest.waitFor({ state: 'visible', timeout: 10000 })
+  await digest.getByRole('button', { name: '开始浏览' }).click()
+  await digest.waitFor({ state: 'hidden', timeout: 10000 })
+  check('首屏摘要弹框可打开并关闭', true)
+  await page.screenshot({ path: path.join(shotDir, 'desktop-01-home.png') })
+
+  // 3.1.1 删除入口：单条按钮在信息库每张卡片上，多选模式给出底部操作条
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  await page.locator('.library-list .info-card').first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => {})
+  const deleteEntryCount = await page.locator('.card-actions .icon-button.danger').count()
+  check('信息卡片带删除入口', deleteEntryCount > 0, `${deleteEntryCount} 个`)
+  await page.getByRole('button', { name: '选择', exact: true }).click()
+  const selectionBar = page.locator('.selection-bar')
+  const barShown = await selectionBar.isVisible().catch(() => false)
+  await page.locator('.library-list .info-card').first().locator('.card-main').click()
+  const selectionText = await selectionBar.locator('.selection-count').innerText().catch(() => '')
+  check('信息库可多选并显示底部操作条', barShown && /已选 1 条/.test(selectionText), selectionText)
+  await selectionBar.getByRole('button', { name: '退出', exact: true }).click()
+  await page.locator('.main-nav').getByRole('button', { name: /今日精选/ }).click()
 
   // 2.7 拖放：故意先回到「今日精选」，证明拖到窗口任意位置都能接住
   //     （只把 drop 绑在消息箱区块上时，拖到别处 drop 根本不会触发，这是实际报过的问题）

@@ -222,29 +222,54 @@ function extractPublishedAt(html: string): string | null {
   return null
 }
 
-/** 从正文里找与「报名/截止/提交」相邻的日期句，作为截止时间候选。
- * 「X月X日以前/之前」是资格界限不是截止时间；日期等于发布日期的也不算（那多半是行文里的自指）。 */
+/**
+ * 从正文里找与「报名/截止/提交」相邻的日期句，作为截止时间候选。
+ * 一个句子里常同时出现多个日期（报名区间、活动日期、统计周期），所以不能只取第一个：
+ * 优先取离「截止/提交」更近的日期，区间则取结束日；「X日前」本身正是常见截止表达。
+ */
 function extractDeadline(text: string, publishedIso?: string | null): { raw: string; sentence: string } | null {
   const keywords = /截止|报名|提交|申报|答辩|预报名/
-  const dateLike = /\d{1,2}\s*月\s*\d{1,2}\s*日|\d{4}-\d{1,2}-\d{1,2}|\d{4}\/\d{1,2}\/\d{1,2}/
+  const dateLike = /(?:\d{4}\s*年\s*)?\d{1,2}\s*月\s*\d{1,2}\s*日(?:\s*\d{1,2}[:：]\d{2})?|\d{4}[-/]\d{1,2}[-/]\d{1,2}(?:[T\s]\d{1,2}:\d{2})?/g
   const sentences = text.split(/(?<=[。；;！!？?\n])/)
+  const published = publishedIso ? dateParts(publishedIso) : null
+
   for (const sentence of sentences) {
     if (!keywords.test(sentence)) continue
-    const match = sentence.match(dateLike)
-    if (!match || match.index === undefined) continue
-    const start = match.index
-    const after = sentence.slice(start + match[0].length, start + match[0].length + 6)
-    if (/^\s*(以|之)?[前早]/.test(after)) continue
-    if (publishedIso && normalizeDate(match[0]) === normalizeDate(publishedIso)) continue
-    return { raw: match[0], sentence: sentence.trim().slice(0, 160) }
+    let best: { raw: string; score: number; index: number } | null = null
+    for (const match of sentence.matchAll(dateLike)) {
+      const raw = match[0].trim()
+      const index = match.index ?? 0
+      if (published && sameDate(raw, published)) continue
+      const before = sentence.slice(Math.max(0, index - 16), index)
+      const after = sentence.slice(index + raw.length, index + raw.length + 8)
+      let score = 0
+      if (/截止/.test(before)) score += 5
+      if (/提交|申报/.test(before)) score += 3
+      if (/报名/.test(before)) score += 2
+      if (/截止/.test(after)) score += 2
+      if (/活动|统计|开始|举办|比赛时间/.test(before)) score -= 4
+      // 区间中的结束日比开始日更像截止日
+      if (/[－—~～至到-]\s*$/.test(before)) score += 3
+      if (!best || score > best.score || (score === best.score && index > best.index)) best = { raw, score, index }
+    }
+    if (!best || best.score < 0) continue
+    return { raw: best.raw, sentence: sentence.trim().slice(0, 160) }
   }
   return null
 }
 
-/** 把「2026-10-16」「2026/10/16」「10月16日」统一成可比较的月-日数字串。 */
-function normalizeDate(raw: string): string {
-  const numbers = raw.match(/\d+/g) ?? []
-  return numbers.slice(-3).map(n => String(Number(n))).join('-')
+function dateParts(raw: string): { month: number; day: number } | null {
+  const numbers = raw.match(/\d+/g)?.map(Number) ?? []
+  if (numbers.length < 2) return null
+  // 带年份时前三个数字是 年-月-日；不带年份时前两个数字就是月、日，后面的数字是时间。
+  return numbers[0] > 1900
+    ? { month: numbers[1], day: numbers[2] }
+    : { month: numbers[0], day: numbers[1] }
+}
+
+function sameDate(raw: string, published: { month: number; day: number }): boolean {
+  const parts = dateParts(raw)
+  return Boolean(parts && parts.month === published.month && parts.day === published.day)
 }
 
 /** 把一条真实公告整理成引擎能吃的新条目；evidence 保留官网原句。

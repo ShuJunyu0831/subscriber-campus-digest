@@ -1,4 +1,4 @@
-import { VENDOR_ENDPOINTS } from './llmModels'
+import { resolveModel, VENDOR_ENDPOINTS } from './llmModels'
 
 /**
  * 真实模型接入（P2）。
@@ -36,6 +36,24 @@ export function readCredentials(): LlmCredentials | null {
 
 export function saveCredentials(credentials: LlmCredentials): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(credentials))
+}
+
+/**
+ * 取「当前选中模型」真正可用的凭据。
+ * 只有已保存凭据的厂商与模型厂商一致时才允许真实调用，避免拿 DeepSeek 的 Key
+ * 去请求 Kimi，也避免界面显示 Kimi 而实际仍请求 DeepSeek。
+ */
+export function credentialsForModel(modelId: string): LlmCredentials | null {
+  const saved = readCredentials()
+  if (!saved) return null
+  const model = resolveModel(modelId)
+  if (saved.vendorKey !== model.vendorKey) return null
+  const preset = VENDOR_ENDPOINTS[model.vendorKey]
+  return {
+    ...saved,
+    baseUrl: saved.baseUrl || preset?.baseUrl || '',
+    apiModel: model.apiModel || saved.apiModel,
+  }
 }
 
 export function clearCredentials(): void {

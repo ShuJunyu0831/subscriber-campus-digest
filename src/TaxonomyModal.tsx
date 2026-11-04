@@ -39,7 +39,7 @@ export default function TaxonomyModal({ library, onClose, onOpenGroup }: {
             <h3><Boxes size={15} />去重与版本规则</h3>
             <ul>
               <li><strong>同一事件</strong>事件标识相同，或标题指纹相似度 ≥ {Math.round(SAME_EVENT_THRESHOLD * 100)}%。</li>
-              <li><strong>重复来源</strong>同一事件、同一版本且相似度 ≥ {Math.round(DUPLICATE_THRESHOLD * 100)}%，只保留可信度最高的来源。</li>
+              <li><strong>重复来源</strong>同一事件、同一版本（截止时间一致）只保留一个结论；标题相似度 ≥ {Math.round(DUPLICATE_THRESHOLD * 100)}% 的更正转载不会重复生成版本，其他来源留档。</li>
               <li><strong>新版本</strong>截止时间发生改动，或标题出现「延期 / 更正 / 补充 / 取消」等词。</li>
               <li><strong>官方优先</strong>多个来源同时转发时，优先采用标注为学校、学院或赛事官方的来源。</li>
             </ul>

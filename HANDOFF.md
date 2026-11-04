@@ -8,7 +8,7 @@
 ## 一、一句话现状
 
 Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 GitHub 私有仓库，
-`npm test` **27 组 Playwright 全绿**、`npm run build` 通过、`desktop:verify` 33 项全过。
+`npm test` **30 组 Playwright 全绿**（三套用例共 47 项）、`npm run build` 通过、`desktop:verify` 39 项全过。
 
 本轮（11-03）补齐了四件事：**信息分类/版本/去重引擎、公众号订阅、赛事官网一键入口、右下角模型选择**；
 随后打通了 **P0 真实数据链路**（`npm run collect` 官网直采 + 快照 + 桌面版实时抓取，详见待办区 P0）、
@@ -31,7 +31,7 @@ Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 
 ```bash
 npm install
 npm run dev              # 开发：http://127.0.0.1:5173
-npm test                 # Web 端 27 组 Playwright（约 50 秒）
+npm test                 # Web 端 47 项 Playwright（prototype 30 组，约 27 秒）
 npm run build            # 类型检查 + 生产构建
 npm run collect          # 真实抓取竞赛官网 → src/live/competitions.json + 桌面版采集器
 
@@ -90,6 +90,20 @@ npm run desktop:verify   # 拉起打包后的 exe 跑 26 项检查（含 IPC 探
 - 首页从「问候语 + 空头图 + 单列」改为「事实型标题 + 信息卡 / 右栏两栏」，右栏放截止时间线与本周完成。
 - 重算墨阶对比度：正文 14:1、次级 7.5:1、说明 6:1、最弱 4.7:1，深浅两套都过 AA。
 - 新增 Playwright 用例「外观可跟随系统、切到浅色或深色，并记住选择」；`desktop:verify` 增至 33 项。
+
+**2026-11-04 删除信息（单条 + 多选）**
+- 删除按**事件**整体进行（`library.byId.get(id).memberIds`）：只删最新版本会把旧版本顶成结论，比不删更误导。
+  三个入口：信息卡右侧的垃圾桶、详情抽屉操作行、完成回顾卡片底部。
+- 提示条支持动作：`ToastState = { message, action? }`。删除给 8 秒撤销窗口，普通提示仍是 2.8 秒；
+  撤销按**原索引**插回，不是追加到列表末尾。
+- 多选：`selectMode` + `selectedIds`（存事件代表 id）。信息库与收藏页的搜索栏里有「选择」开关，
+  进入后卡片右侧按钮隐藏、左侧出现勾选圈，选中态用印色书脊条 + 浅印底；底部固定操作条给「全选当前结果 / 退出 / 删除选中」。
+  全选只作用于当前筛选结果，切页或退出时清空选择。
+- 空状态：`EmptyState` 新增 `today` / `empty` 两种，删空后今日页与信息库给导入入口；摘要弹框在 0 条时不再弹出。
+- 修掉一个隐患：`listInfoItems()` 返回空数组原本等同于「没有数据」，删光条目重启会把内置示例全部装回来。
+  现在 `saveInfoItems` 成功后写 `subscriber-library-saved`，只有「从未保存过」才回退到示例数据。
+- 新增 Playwright 用例「删除单条信息后可以撤销，删除结果跨刷新保留」「信息库可以多选删除，撤销后按原顺序恢复」
+  「删空信息库后重启不会把内置示例装回来」；`desktop:verify` 增至 39 项（新增删除入口与多选操作条两检查）。
 
 **桌面版**
 - Electron 45，`contextIsolation + sandbox`，`file://` 加载，单实例锁，外链交给系统浏览器。
@@ -168,7 +182,7 @@ electron/             主进程（IPC：live:fetch / live:fetch-custom / rss:fet
 electron/share-args.cjs  外部转发参数解析（协议链接 / --share-text / --share-file），纯函数、被验证脚本直接断言
 electron/live/        collector.cjs（npm run collect 生成，已 gitignore）
 .github/workflows/ci.yml  CI：build + Playwright（Node 20 + Chromium）
-tests/prototype.spec.ts   27 组 Playwright 用例
+tests/prototype.spec.ts   30 组 Playwright 用例
 ```
 
 ---
@@ -194,6 +208,10 @@ tests/prototype.spec.ts   27 组 Playwright 用例
    抓不到就报错，不许用演示内容顶替失败结果。
 10. **模型选择器不发请求。** 只是界面标签，任何真实调用都要单独做密钥管理、计费提示与失败兜底。
 11. **官网只放能核实的入口。** 拿不准就留空显示「官网待核对」，不要编造链接。
+14. **删除按事件整体进行，不做「只删这一条来源」。** 同一事件的旧版本与转载共用 `eventKey`，
+    只删当前版本会让旧结论（比如 11 月 3 日的截止时间）重新变成首页结论，比不删更误导。
+15. **删除必须给撤销，不用 `window.confirm`。** 提示条给 8 秒窗口、撤销按原索引插回；
+    系统确认框在 Electron 里阻塞渲染、还会打断正在输入的表单。
 
 技术侧：
 
@@ -219,6 +237,10 @@ tests/prototype.spec.ts   27 组 Playwright 用例
 - `follows` 状态放在 `App.tsx`（不是 `WechatInbox` 内部），因为信息库过滤和关注页要共用同一份数据；
   组件里别再各自 `readFollows()`，会出现两处状态不同步。
 - 「批量导入」与「批量粘贴导入」两个按钮是**不同文案**，测试用 `exact: true` 区分；改文案前先看 `tests/prototype.spec.ts`。
+- **多选集合存的是事件代表 id**（卡片上那条），删除时再用 `memberIds` 展开成整组。
+  改成直接存 memberIds 会让「全选」与卡片数量对不上。
+- **空状态分两类**：`EmptyState` 的 `today` / `empty` 只在「真的没有条目」时出现，
+  别在搜索无结果时复用，否则用户会以为信息库空了。
 
 ---
 
@@ -459,6 +481,9 @@ F. 导出格式的拆分修复（`shareImport.ts`）
 | 次级文字对比度不足 | 第一版 `--ink-4` 用了 #8f8d80，在暖纸底上只有 2.9:1，12px 说明文字几乎看不清。用 WCAG 公式算过再定值：`--ink-3` 6:1、`--ink-4` 4.7:1，深色侧同样过 AA。 |
 | 移除全屏噪点画布 | 原来的 WebGL2 ASCII 背景在文字下方铺一层动效，深色模式下彻底失效，且是典型「AI 生成界面」观感。`GradientASCII.tsx` 已删除，`verify-package.mjs` 反向断言页面上没有 canvas。 |
 | 用户跑的还是旧 exe | 打包目录里同时有多个 `Subscriber.exe` 在跑时，改代码不会生效。改完必须 `taskkill //F //IM Subscriber.exe` 再重打包，`desktop:verify` 会拉起新 exe。 |
+| 删空后示例数据复活 | `listInfoItems()` 返回空数组**不等于**「从没存过」。`saveInfoItems` 成功时写 `subscriber-library-saved`，加载时只有「从未保存过」才回退内置示例，否则用户删掉的条目重启后全部回来。 |
+| 撤销按钮点不动 | `.toast` 为了不挡页面设了 `pointer-events: none`，里面的 `.toast-action` 必须单独 `pointer-events: auto`，否则按钮看得见点不着。 |
+| 选择条把文字压成竖排 | 选择条是 `position: fixed` 的 flex，`.text-button` 没写 `white-space: nowrap` 时，390px 下「全选当前结果」会被压成一列单字；窄屏还要把 `.llm-dock` 收起来给操作条让位。 |
 
 ---
 

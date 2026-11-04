@@ -37,7 +37,24 @@ function readTextFile(target) {
     const stat = fs.statSync(target)
     if (!stat.isFile() || stat.size > MAX_FILE_BYTES) return null
     if (!TEXT_FILE.test(target)) return null
-    return fs.readFileSync(target, 'utf8').slice(0, MAX_TEXT)
+    const bytes = fs.readFileSync(target)
+    let text
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    } catch {
+      // 微信导出的聊天记录常见 GBK/GB18030，不能直接按 UTF-8 读出乱码。
+      text = new TextDecoder('gb18030').decode(bytes)
+    }
+    if (/\.html?$/i.test(target)) {
+      text = text
+        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+        .replace(/<br\s*\/?>|<\/p>|<\/div>/gi, '\n')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+        .replace(/[ \t]+/g, ' ')
+    }
+    return text.slice(0, MAX_TEXT)
   } catch {
     return null
   }

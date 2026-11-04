@@ -5,6 +5,8 @@ export interface LlmModel {
   name: string
   vendor: string
   vendorKey: string
+  /** 真实调用时写入请求体的厂商 API 模型名。 */
+  apiModel: string
   kind: ModelKind
   context: string
   note: string
@@ -44,6 +46,7 @@ export const llmModels: LlmModel[] = [
     name: 'DeepSeek-V3.2',
     vendor: '深度求索',
     vendorKey: 'deepseek',
+    apiModel: 'deepseek-chat',
     kind: '通用',
     context: '128K',
     note: '中文长文与结构化抽取稳定，成本低',
@@ -55,6 +58,7 @@ export const llmModels: LlmModel[] = [
     name: 'DeepSeek-R1',
     vendor: '深度求索',
     vendorKey: 'deepseek',
+    apiModel: 'deepseek-reasoner',
     kind: '推理',
     context: '128K',
     note: '带思维链，适合复杂日期与条款比对',
@@ -65,6 +69,7 @@ export const llmModels: LlmModel[] = [
     name: '通义千问 Qwen3-Max',
     vendor: '阿里云',
     vendorKey: 'qwen',
+    apiModel: 'qwen3-max',
     kind: '通用',
     context: '256K',
     note: '长文档摘要与多语言表现均衡',
@@ -75,6 +80,7 @@ export const llmModels: LlmModel[] = [
     name: 'Qwen3-Coder-Plus',
     vendor: '阿里云',
     vendorKey: 'qwen',
+    apiModel: 'qwen3-coder-plus',
     kind: '代码',
     context: '256K',
     note: '解析代码作业与实验说明更可靠',
@@ -85,6 +91,7 @@ export const llmModels: LlmModel[] = [
     name: '豆包 Doubao-Seed-1.6',
     vendor: '字节跳动',
     vendorKey: 'doubao',
+    apiModel: 'doubao-seed-1-6-250615',
     kind: '通用',
     context: '256K',
     note: '响应快，适合日常通知的批量归类',
@@ -95,6 +102,7 @@ export const llmModels: LlmModel[] = [
     name: 'Kimi K2',
     vendor: '月之暗面',
     vendorKey: 'kimi',
+    apiModel: 'kimi-k2-0905-preview',
     kind: '长文本',
     context: '256K',
     note: '一次读完多份通知与附件',
@@ -106,6 +114,7 @@ export const llmModels: LlmModel[] = [
     name: '智谱 GLM-4.6',
     vendor: '智谱 AI',
     vendorKey: 'glm',
+    apiModel: 'glm-4.6',
     kind: '通用',
     context: '200K',
     note: '中英混排与表格信息提取较好',
@@ -116,6 +125,7 @@ export const llmModels: LlmModel[] = [
     name: '文心一言 ERNIE 5.0',
     vendor: '百度',
     vendorKey: 'ernie',
+    apiModel: 'ernie-5.0',
     kind: '通用',
     context: '128K',
     note: '中文语义理解与政策解读见长',
@@ -126,6 +136,7 @@ export const llmModels: LlmModel[] = [
     name: '腾讯混元 Hunyuan-T1',
     vendor: '腾讯',
     vendorKey: 'hunyuan',
+    apiModel: 'hunyuan-t1',
     kind: '推理',
     context: '128K',
     note: '长链推理，适合冲突信息交叉验证',
@@ -136,6 +147,7 @@ export const llmModels: LlmModel[] = [
     name: 'MiniMax-M2',
     vendor: 'MiniMax',
     vendorKey: 'minimax',
+    apiModel: 'MiniMax-M2',
     kind: '通用',
     context: '200K',
     note: '摘要与改写自然，适合生成知单',
@@ -146,6 +158,7 @@ export const llmModels: LlmModel[] = [
     name: '讯飞星火 X1',
     vendor: '科大讯飞',
     vendorKey: 'spark',
+    apiModel: 'x1',
     kind: '推理',
     context: '128K',
     note: '中文教育场景语料丰富',

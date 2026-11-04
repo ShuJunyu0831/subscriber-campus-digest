@@ -5,6 +5,8 @@ node_modules/
 dist/
 release/
 desktop-dist/
+desktop-verify-dist/
+desktop-verify-dist-v2/
 build/icon.ico
 tsconfig.tsbuildinfo
 .tmp-collect/

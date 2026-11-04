@@ -39,19 +39,33 @@ export default function Masonry({
 }: MasonryProps) {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const [width, setWidth] = useState(0)
+  const [contentVersion, setContentVersion] = useState(0)
 
-  // 跟随容器宽度：窗口缩放、侧栏折叠都会改变可用宽度
+  // 跟随容器宽度，并观察卡片自身高度：字体加载、展开正文后也要重新排布。
   useLayoutEffect(() => {
     const root = rootRef.current
     if (!root) return
+    let frame = 0
+    const schedule = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => setContentVersion(value => value + 1))
+    }
     const observer = new ResizeObserver(entries => {
-      const next = Math.round(entries[0].contentRect.width)
-      setWidth(current => (current === next ? current : next))
+      const rootEntry = entries.find(entry => entry.target === root)
+      if (rootEntry) {
+        const next = Math.round(rootEntry.contentRect.width)
+        setWidth(current => (current === next ? current : next))
+      }
+      schedule()
     })
     observer.observe(root)
+    for (const tile of Array.from(root.children)) observer.observe(tile)
     setWidth(Math.round(root.getBoundingClientRect().width))
-    return () => observer.disconnect()
-  }, [])
+    return () => {
+      cancelAnimationFrame(frame)
+      observer.disconnect()
+    }
+  }, [children])
 
   // 排布：定宽 → 量高 → 放进最矮的一列 → 写回 transform
   useLayoutEffect(() => {
@@ -92,7 +106,7 @@ export default function Masonry({
     })
 
     root.style.height = `${Math.max(0, Math.max(...heights) - gap)}px`
-  }, [children, width, gap, minColumnWidth, maxColumns])
+  }, [children, width, gap, minColumnWidth, maxColumns, contentVersion])
 
   return (
     <div

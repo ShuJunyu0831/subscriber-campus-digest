@@ -67,7 +67,14 @@ export default function FollowSources({ follows, onChange, notify, addItem, onIm
     setSiteError('')
     try {
       const result = await bridge()
-      const items = (result.report?.items ?? []).filter(item => item.liveSourceId === follow.liveSourceId)
+      if (!result.ok || !result.report) {
+        const message = result.message || '抓取失败：主进程没有返回报告'
+        patch(follow.id, { lastStatus: message })
+        setSiteError(message)
+        notify(`${follow.name}：${message}`)
+        return
+      }
+      const items = result.report.items.filter(item => item.liveSourceId === follow.liveSourceId)
       const added = items.filter(item => addItem(item).ok).length
       patch(follow.id, {
         lastFetchedAt: Date.now(),

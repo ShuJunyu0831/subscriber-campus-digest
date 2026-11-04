@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "playwright test",
+    "verify": "node scripts/verify.mjs",
     "collect": "node scripts/collect.mjs",
     "desktop": "npm run build && node electron/launch.cjs",
     "desktop:dev": "node electron/launch.cjs --dev",

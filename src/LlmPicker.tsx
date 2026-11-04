@@ -34,6 +34,7 @@ export default function LlmPicker({ value, onChange }: {
   const rootRef = useRef<HTMLDivElement | null>(null)
   const current = resolveModel(value)
   const groups = groupModels()
+  const activeCredentials = credentials?.vendorKey === current.vendorKey ? credentials : null
 
   useEffect(() => {
     if (!open) return
@@ -83,15 +84,15 @@ export default function LlmPicker({ value, onChange }: {
         <section className="llm-panel" role="dialog" aria-label="选择分析模型">
           <header className="llm-panel-head">
             <div>
-              <span className="eyebrow">{credentials ? '已接入真实模型' : '演示模式'}</span>
+              <span className="eyebrow">{activeCredentials ? '已接入真实模型' : '演示模式'}</span>
               <h3>选择用哪个模型分析</h3>
             </div>
             <button type="button" className="icon-button" aria-label="收起模型列表" onClick={() => setOpen(false)}><X size={17} /></button>
           </header>
           <p className="llm-panel-note">
-            {credentials
-              ? <>已接入 {vendorLabel(credentials.vendorKey)}：导入粘贴文字时将真实调用所选模型接口。</>
-              : <><Sparkles size={13} />演示模式仅切换界面标签；保存 API Key 后，导入粘贴文字会真实调用所选模型。</>}
+            {activeCredentials
+              ? <>已接入 {vendorLabel(activeCredentials.vendorKey)}：导入粘贴文字时将真实调用 {current.name}。</>
+              : <><Sparkles size={13} />{credentials ? `当前选的是${current.vendor}，已保存的是${vendorLabel(credentials.vendorKey)} Key；请为当前厂商保存 Key。` : '演示模式仅切换界面标签；保存 API Key 后，导入粘贴文字会真实调用所选模型。'}</>}
           </p>
           <div className="llm-groups">
             {groups.map(group => (
@@ -105,7 +106,16 @@ export default function LlmPicker({ value, onChange }: {
                       key={model.id}
                       className={`llm-option ${active ? 'selected' : ''}`}
                       aria-pressed={active}
-                      onClick={() => { onChange(model.id); setOpen(false) }}
+                      onClick={() => {
+                        onChange(model.id)
+                        setVendorKey(model.vendorKey)
+                        const preset = VENDOR_ENDPOINTS[model.vendorKey]
+                        if (preset) {
+                          setBaseUrl(preset.baseUrl)
+                          setApiModel(model.apiModel)
+                        }
+                        setOpen(false)
+                      }}
                     >
                       <span className="llm-dot" style={{ background: model.accent }} aria-hidden="true" />
                       <span className="llm-option-copy">
@@ -128,7 +138,7 @@ export default function LlmPicker({ value, onChange }: {
               onClick={() => setSettingsOpen(state => !state)}
             >
               <KeyRound size={13} />
-              {credentials ? `已接入 ${vendorLabel(credentials.vendorKey)} · 真实调用` : '接入真实模型（可选）'}
+              {activeCredentials ? `已接入 ${vendorLabel(activeCredentials.vendorKey)} · 真实调用` : credentials ? `已保存 ${vendorLabel(credentials.vendorKey)} Key，当前模型未接入` : '接入真实模型（可选）'}
               <ChevronDown size={13} className={settingsOpen ? 'up' : ''} />
             </button>
             {settingsOpen && (
@@ -164,7 +174,7 @@ export default function LlmPicker({ value, onChange }: {
           </div>
           <footer className="llm-panel-foot">
             <span><Cpu size={13} />当前：{current.vendor} · {current.name}</span>
-            {credentials ? <span className="connected-label">已接入</span> : <span className="demo-label">演示选择</span>}
+            {activeCredentials ? <span className="connected-label">已接入</span> : <span className="demo-label">演示选择</span>}
           </footer>
         </section>
       )}

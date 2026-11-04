@@ -27,7 +27,7 @@ import { officialAccounts, type AccountArticle } from './accounts'
 import AccountFeed from './AccountFeed'
 import FollowSources from './FollowSources'
 import SplitText from './SplitText'
-import { readCredentials, summarizeWithLlm } from './llmClient'
+import { credentialsForModel, summarizeWithLlm } from './llmClient'
 import type { FollowedSource } from './follows'
 import { CHANNEL_LABELS, parseBatchText, type BatchEntry, type MessageChannel } from './shareImport'
 import {
@@ -62,6 +62,7 @@ interface WechatInboxProps {
   addItem: (input: NewItemInput) => AddItemResult
   notify: (message: string) => void
   modelName: string
+  modelId: string
   library: LibraryClassification
   onImportArticle: (article: AccountArticle, mode: 'new' | 'update') => void
   /** 关注源由 App 持有：信息库要按它过滤官网条目 */
@@ -69,6 +70,8 @@ interface WechatInboxProps {
   onFollowsChange: (next: FollowedSource[]) => void
   /** 外部转发进来的内容（App 收到后切到本页并传进来），stamp 变化即重新导入一次 */
   incoming?: { text: string; stamp: number; name?: string } | null
+  /** 通知 App 清空已消费的分享，避免离开本页再回来时重复弹出。 */
+  onIncomingConsumed?: () => void
   /** 有内容正被拖到窗口上：由 App 的窗口级监听驱动，这里只用来高亮消息箱 */
   dragActive?: boolean
 }
@@ -107,7 +110,7 @@ function InlineModal({ title, eyebrow, children, onClose, wide = false }: {
   )
 }
 
-export default function WechatInbox({ addItem, notify, modelName, library, onImportArticle, follows, onFollowsChange, incoming, dragActive = false }: WechatInboxProps) {
+export default function WechatInbox({ addItem, notify, modelName, modelId, library, onImportArticle, follows, onFollowsChange, incoming, onIncomingConsumed, dragActive = false }: WechatInboxProps) {
   const isDesktopShell = Boolean(window.subscriberDesktop?.isDesktop)
   const canReadClipboard = Boolean(window.subscriberDesktop?.readClipboard)
 
@@ -181,7 +184,7 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
     .join('\n\n')
   const redactedOutboundText = redactText(outboundText)
   const hiddenCount = Math.max(0, outboundText.length - redactedOutboundText.length)
-  const credentials = readCredentials()
+  const credentials = credentialsForModel(modelId)
   const realCall = Boolean(credentials)
 
   const openBlankDraft = () => {
@@ -298,7 +301,8 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
     // 带上文件名做默认来源名：导出的聊天记录里没有群名，总比「未命名来源 1」好认
     openBatch('wechat', incoming.text, incoming.name ?? '')
     notify('已接收外部转发的内容，确认拆分后再保存到本机')
-  }, [incoming?.stamp, incoming?.text, incoming?.name, openBatch, notify])
+    onIncomingConsumed?.()
+  }, [incoming?.stamp, incoming?.text, incoming?.name, openBatch, notify, onIncomingConsumed])
 
   /**
    * 拖进来的内容由 App 的窗口级监听读取并走 incoming 通道送进来，

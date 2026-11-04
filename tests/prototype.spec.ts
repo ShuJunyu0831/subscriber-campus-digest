@@ -37,14 +37,132 @@ test('收藏、详情与完成回顾可以连续操作', async ({ page }) => {
   await expect(page.locator('.completed-list')).toContainText('数学建模')
 })
 
-test('手动导入校验并生成模拟条目', async ({ page }) => {
+test('删除单条信息后可以撤销，删除结果跨刷新保留', async ({ page }) => {
+  await openHome(page)
+  const cards = page.locator('.today-main .info-card')
+  const total = await cards.count()
+  const title = (await cards.first().locator('h3').innerText()).trim()
+
+  await cards.first().getByRole('button', { name: /删除/ }).click()
+  await expect(cards).toHaveCount(total - 1)
+  await expect(page.locator('.toast')).toContainText('已删除')
+
+  // 撤销：条目回到原位，不是被追加到末尾
+  await page.locator('.toast').getByRole('button', { name: '撤销' }).click()
+  await expect(cards).toHaveCount(total)
+  await expect(cards.first().locator('h3')).toHaveText(title)
+
+  // 详情抽屉里也能删除，删完抽屉要自动关闭
+  await cards.first().locator('.card-main').click()
+  const drawer = page.getByRole('dialog', { name: '信息详情' })
+  await expect(drawer).toBeVisible()
+  await drawer.getByRole('button', { name: '删除这条信息' }).click()
+  await expect(drawer).toBeHidden()
+  await expect(cards).toHaveCount(total - 1)
+
+  // 等本机快照真正落库再刷新，否则断言的是写入前的旧数据
+  await expect.poll(() => page.evaluate((removedTitle) => new Promise<boolean>(resolve => {
+    const request = indexedDB.open('subscriber-info-library', 1)
+    request.onerror = () => resolve(false)
+    request.onsuccess = () => {
+      const db = request.result
+      const all = db.transaction('items', 'readonly').objectStore('items').getAll()
+      all.onsuccess = () => {
+        const rows = all.result as { title: string }[]
+        db.close()
+        resolve(rows.length > 0 && !rows.some(row => row.title === removedTitle))
+      }
+      all.onerror = () => resolve(false)
+    }
+  }), title), { timeout: 8000 }).toBe(true)
+
+  await page.reload()
+  const digest = page.getByRole('dialog', { name: '今天，值得关注这些' })
+  if (await digest.isVisible()) await digest.getByRole('button', { name: '开始浏览' }).click()
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  await expect(page.locator('.library-list')).not.toContainText(title)
+})
+
+test('信息库可以多选删除，撤销后按原顺序恢复', async ({ page }) => {
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  const cards = page.locator('.library-list .info-card')
+  const total = await cards.count()
+  const firstTitle = (await cards.nth(0).locator('h3').innerText()).trim()
+  const secondTitle = (await cards.nth(1).locator('h3').innerText()).trim()
+
+  await page.getByRole('button', { name: '选择', exact: true }).click()
+  await expect(page.locator('.selection-bar')).toBeVisible()
+  await cards.nth(0).getByRole('button', { name: /^选择/ }).click()
+  await cards.nth(1).getByRole('button', { name: /^选择/ }).click()
+  await expect(page.locator('.selection-count')).toContainText('2')
+
+  // 全选只作用于当前结果，再取消后重新选两条
+  await page.getByRole('button', { name: '全选当前结果' }).click()
+  await expect(page.locator('.selection-count')).toContainText(String(total))
+  await page.getByRole('button', { name: '取消全选' }).click()
+  await expect(page.locator('.selection-count')).toContainText('0')
+  await cards.nth(0).getByRole('button', { name: /^选择/ }).click()
+  await cards.nth(1).getByRole('button', { name: /^选择/ }).click()
+
+  await page.getByRole('button', { name: /删除选中/ }).click()
+  await expect(cards).toHaveCount(total - 2)
+  await expect(page.locator('.toast')).toContainText('已删除 2 条信息')
+  await expect(page.locator('.selection-bar')).toBeHidden()
+
+  await page.locator('.toast').getByRole('button', { name: '撤销' }).click()
+  await expect(cards).toHaveCount(total)
+  await expect(cards.nth(0).locator('h3')).toHaveText(firstTitle)
+  await expect(cards.nth(1).locator('h3')).toHaveText(secondTitle)
+})
+
+test('删空信息库后重启不会把内置示例装回来', async ({ page }) => {
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  const cards = page.locator('.library-list .info-card')
+
+  // 逐条删完：每次删掉的是一个事件，事件里的旧版本与转载一起走
+  for (let guard = 0; guard < 40; guard += 1) {
+    if (await cards.count() === 0) break
+    await cards.first().getByRole('button', { name: /删除/ }).click()
+  }
+  await expect(cards).toHaveCount(0)
+  await expect(page.locator('.empty-state')).toContainText('信息库还是空的')
+
+  // 等「空快照 + 已保存标记」都落库，否则刷新读到的是写入前的状态
+  await expect.poll(() => page.evaluate(() => new Promise<boolean>(resolve => {
+    const saved = Number(localStorage.getItem('subscriber-library-saved') || 0) > 0
+    const request = indexedDB.open('subscriber-info-library', 1)
+    request.onerror = () => resolve(false)
+    request.onsuccess = () => {
+      const db = request.result
+      const count = db.transaction('items', 'readonly').objectStore('items').count()
+      count.onsuccess = () => {
+        db.close()
+        resolve(saved && count.result === 0)
+      }
+      count.onerror = () => resolve(false)
+    }
+  })), { timeout: 8000 }).toBe(true)
+
+  await page.reload()
+  await expect(page.getByRole('dialog', { name: '今天，值得关注这些' })).toBeHidden()
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  await expect(cards).toHaveCount(0)
+  await expect(page.locator('.empty-state')).toContainText('信息库还是空的')
+})
+
+test('手动导入校验、预览确认后写入信息库', async ({ page }) => {
   await openHome(page)
   await page.getByRole('button', { name: '导入新信息' }).click()
   await page.getByRole('button', { name: '开始整理' }).click()
   await expect(page.getByText('请先粘贴需要整理的文字。')).toBeVisible()
   await page.locator('textarea').fill('全国大学生软件创新大赛报名通知\n报名截止时间为11月20日。')
   await page.getByRole('button', { name: '开始整理' }).click()
-  await expect(page.getByRole('dialog', { name: '导入一条信息' })).toBeHidden()
+  const preview = page.getByRole('dialog', { name: '确认写入信息库' })
+  await expect(preview).toContainText('原文已真实读取')
+  await preview.getByRole('button', { name: '确认入库' }).click()
+  await expect(preview).toBeHidden()
   await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
   await expect(page.locator('.library-list')).toContainText('全国大学生软件创新大赛报名通知')
 })
@@ -101,7 +219,10 @@ test('接入真实模型后粘贴文字调用 OpenAI 兼容接口（mock 验证�
   await expect(modal).toContainText('真实调用')
   await modal.locator('textarea').fill('2026 年校内数学建模选拔报名通知\n报名截止时间为11月20日。')
   await modal.getByRole('button', { name: '开始整理' }).click()
-  await expect(modal).toBeHidden()
+  const preview = page.getByRole('dialog', { name: '确认写入信息库' })
+  await expect(preview).toContainText('校内数学建模选拔赛开始报名')
+  await preview.getByRole('button', { name: '确认入库' }).click()
+  await expect(preview).toBeHidden()
   expect(apiCalls).toBe(1)
 
   // 信息库里出现的是模型返回的摘要，而不是演示文案
@@ -825,7 +946,10 @@ test('外观可跟随系统、切到浅色或深色，并记住选择', async ({
     }
   })
   expect(contrast.cardBg).not.toBe('rgb(255, 255, 255)')
-  expect(contrast.text).not.toBe('rgb(31, 33, 25)')
+  // 主题色有过渡动画，轮询到稳定值，避免在过渡中途读到浅色文字。
+  await expect.poll(() => page.evaluate(() =>
+    getComputedStyle(document.querySelector('.card-main h3')!).color,
+  )).not.toBe('rgb(31, 33, 25)')
 
   // 刷新后仍然是深色（首屏摘要会重新弹出，先关掉再操作顶栏）
   await page.reload()

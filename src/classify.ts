@@ -116,11 +116,13 @@ export function inferCategory(text: string): CategoryGuess {
   // 完全没有任何信号时落到新闻，但置信度会很低，界面据此提示“待人工确认”。
   const ranked = (Object.keys(scores) as Category[]).sort((a, b) => scores[b] - scores[a])
   const total = ranked.reduce((sum, key) => sum + scores[key], 0)
+  if (total === 0) {
+    return { category: '新闻', confidence: 34, matched: [], scores }
+  }
   const top = ranked[0]
-  const rawConfidence = total === 0 ? 0.34 : scores[top] / total
   return {
     category: top,
-    confidence: Math.round(Math.min(0.98, rawConfidence) * 100),
+    confidence: Math.round(Math.min(0.98, scores[top] / total) * 100),
     matched: hits[top].slice(0, 4),
     scores,
   }
@@ -132,8 +134,12 @@ const FULL_DATE = /(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日(?:\s*(\d{1,
 const SHORT_DATE = /(\d{1,2})\s*月\s*(\d{1,2})\s*日(?:\s*(\d{1,2})[:：](\d{2}))?/
 const SLASH_DATE = /(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s](\d{1,2}):(\d{2}))?/
 
-function buildTimestamp(year: number, month: number, day: number, hour = 23, minute = 59): number {
+function buildTimestamp(year: number, month: number, day: number, hour = 23, minute = 59): number | null {
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59) return null
   const date = new Date(year, month - 1, day, hour, minute, 0, 0)
+  // Date 会把 2 月 30 日滚到 3 月，必须回读校验，不能把非法日期当成有效截止。
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day
+    || date.getHours() !== hour || date.getMinutes() !== minute) return null
   return date.getTime()
 }
 
@@ -183,8 +189,8 @@ function publishedTimestamp(item: InfoItem, now: Date): number {
     date.setHours(time ? Number(time[1]) : 9, time ? Number(time[2]) : 0, 0, 0)
     return date.getTime()
   }
-  const parsed = parseDateText(text, now)
-  return parsed ?? now.getTime() - 1000
+  // 发布时间未知时不能伪装成「刚刚」，否则旧公告会排到最新。
+  return parseDateText(text, now) ?? 0
 }
 
 /* ---------------------------------- 版本与去重 --------------------------------- */
@@ -217,6 +223,8 @@ export interface Classification {
   topics: string[]
   /** 原始数组中的首次出现位置，用来保持列表顺序稳定。 */
   order: number
+  /** 归入同一事件的所有原始条目 id，用户操作要同步到整组。 */
+  memberIds: number[]
 }
 
 export interface LibraryClassification {
@@ -234,12 +242,12 @@ export interface LibraryClassification {
   }
 }
 
-function deadlineTimestamp(item: InfoItem): number | null {
+function deadlineTimestamp(item: InfoItem, now = new Date()): number | null {
   if (item.deadlineTs) {
     const parsed = Date.parse(item.deadlineTs)
     if (!Number.isNaN(parsed)) return parsed
   }
-  return parseDateText(item.deadline)
+  return parseDateText(item.deadline, now)
 }
 
 function completeness(item: InfoItem): number {
@@ -260,16 +268,16 @@ function completeness(item: InfoItem): number {
 }
 
 function statusOf(item: InfoItem, now: Date): ItemStatus {
-  const deadline = deadlineTimestamp(item)
+  const deadline = deadlineTimestamp(item, now)
   if (!deadline) return item.deadline ? 'unconfirmed' : 'active'
   if (now.getTime() > deadline) return 'expired'
   if (deadline - now.getTime() <= 3 * DAY) return 'expiring'
   return 'active'
 }
 
-function describeChange(previous: InfoItem, current: InfoItem): string {
-  const prevDeadline = deadlineTimestamp(previous)
-  const nextDeadline = deadlineTimestamp(current)
+function describeChange(previous: InfoItem, current: InfoItem, now: Date): string {
+  const prevDeadline = deadlineTimestamp(previous, now)
+  const nextDeadline = deadlineTimestamp(current, now)
   if (prevDeadline && nextDeadline && prevDeadline !== nextDeadline) {
     return `截止时间更新为 ${current.deadline ?? '待核对'}`
   }
@@ -280,7 +288,15 @@ function describeChange(previous: InfoItem, current: InfoItem): string {
   return '标题有实质变化'
 }
 
+function completedTimestampOf(item: InfoItem): number | null {
+  if (!item.completedAt) return null
+  const timestamp = Date.parse(item.completedAt)
+  return Number.isNaN(timestamp) ? parseDateText(item.completedAt) : timestamp
+}
+
 function representativeOf(bucket: InfoItem[], now: Date): InfoItem {
+  // 版本桶内已经是同一个结论；此时优先选字段更全、来源更可信的一条，
+  // 避免较晚转发的聚合号覆盖官方原文。
   return [...bucket].sort(
     (a, b) => completeness(b) - completeness(a) || publishedTimestamp(b, now) - publishedTimestamp(a, now),
   )[0]
@@ -325,6 +341,7 @@ export function classifyLibrary(items: InfoItem[], now = new Date()): LibraryCla
   const groups = cluster(items)
   const orderById = new Map(items.map((item, index) => [item.id, index]))
   const entries: Classification[] = []
+  const byId = new Map<number, Classification>()
 
   for (const group of groups) {
     const sorted = [...group].sort((a, b) => publishedTimestamp(a, now) - publishedTimestamp(b, now))
@@ -338,11 +355,15 @@ export function classifyLibrary(items: InfoItem[], now = new Date()): LibraryCla
         notes.push('首次收录')
         continue
       }
-      const deadlineChanged = deadlineTimestamp(previous) !== deadlineTimestamp(item)
+      const deadlineChanged = deadlineTimestamp(previous, now) !== deadlineTimestamp(item, now)
       const hasContentChange = CONTENT_CHANGE_WORDS.test(item.title)
-      if (deadlineChanged || hasContentChange) {
+      const previousHasChange = CONTENT_CHANGE_WORDS.test(previous.title)
+      const similarEnough = similarity(previous.title, item.title) >= DUPLICATE_THRESHOLD
+      // 两篇同标题、同截止的「更正」转载不应各造一个版本；只有真正的更新才开新版本。
+      const repeatedCorrection = hasContentChange && previousHasChange && similarEnough && !deadlineChanged
+      if (deadlineChanged || (hasContentChange && !repeatedCorrection)) {
         buckets.push([item])
-        notes.push(describeChange(previous, item))
+        notes.push(describeChange(previous, item, now))
       } else {
         buckets[buckets.length - 1].push(item)
       }
@@ -350,7 +371,7 @@ export function classifyLibrary(items: InfoItem[], now = new Date()): LibraryCla
 
     const versions: VersionEntry[] = buckets.map((bucket, index) => {
       const representative = representativeOf(bucket, now)
-      const deadlineTs = deadlineTimestamp(representative)
+      const deadlineTs = deadlineTimestamp(representative, now)
       return {
         id: representative.id,
         version: index + 1,
@@ -367,11 +388,33 @@ export function classifyLibrary(items: InfoItem[], now = new Date()): LibraryCla
     })
 
     const latestBucket = buckets[buckets.length - 1]
-    const canonical = representativeOf(latestBucket, now)
+    const latest = representativeOf(latestBucket, now)
+    // 版本合并的是“同一件事”的多个来源；收藏、完成、今日精选、官网入口属于事件级状态，
+    // 不能因为最新转载没填这些字段就从界面上消失。
+    const richest = [...group].sort((a, b) => completeness(b) - completeness(a))[0]
+    const completedSource = [...group]
+      .filter(item => item.completed)
+      .sort((a, b) => (completedTimestampOf(b) ?? 0) - (completedTimestampOf(a) ?? 0))[0]
+    const canonical: InfoItem = {
+      ...richest,
+      ...latest,
+      eventDate: latest.eventDate ?? richest.eventDate,
+      location: latest.location ?? richest.location,
+      eligibility: latest.eligibility ?? richest.eligibility,
+      organizer: latest.organizer ?? richest.organizer,
+      officialUrl: latest.officialUrl ?? richest.officialUrl,
+      officialHome: latest.officialHome ?? richest.officialHome,
+      favorite: group.some(item => item.favorite),
+      liked: group.some(item => item.liked),
+      completed: group.some(item => item.completed),
+      completedAt: completedSource?.completedAt ?? latest.completedAt,
+      daily: group.some(item => item.daily),
+    }
     const guess = inferCategory(`${canonical.title} ${canonical.summary ?? ''} ${(canonical.tags ?? []).join(' ')}`)
     const topics = [...new Set([...(canonical.tags ?? []), ...guess.matched])].slice(0, 4)
     const duplicateCount = group.length - buckets.length
     const order = Math.min(...group.map(item => orderById.get(item.id) ?? 0))
+    const memberIds = group.map(item => item.id)
 
     const entry: Classification = {
       key: entityKey(canonical.title) || `item-${canonical.id}`,
@@ -387,16 +430,14 @@ export function classifyLibrary(items: InfoItem[], now = new Date()): LibraryCla
       matched: guess.matched,
       topics,
       order,
+      memberIds,
     }
     entries.push(entry)
+    // 被合并进同一版本的每个原始 id 都要能打开事件详情，而不只是代表条目。
+    for (const original of group) byId.set(original.id, entry)
   }
 
   entries.sort((a, b) => a.order - b.order)
-  const byId = new Map<number, Classification>()
-  for (const entry of entries) {
-    for (const version of entry.versions) byId.set(version.id, entry)
-    byId.set(entry.item.id, entry)
-  }
 
   const visible = [...entries].sort((a, b) => a.order - b.order)
   return {
@@ -435,9 +476,13 @@ export function findExistingItem(
 
 /** 距离截止还有几天（向上取整）。已截止为负数，日期缺失为 null。 */
 export function deadlineDays(item: InfoItem, now = new Date()): number | null {
-  const timestamp = deadlineTimestamp(item)
+  const timestamp = deadlineTimestamp(item, now)
   if (!timestamp) return null
-  return Math.ceil((timestamp - now.getTime()) / DAY)
+  const difference = timestamp - now.getTime()
+  // 刚过期不足一天也必须返回负数，不能显示成「今天截止」。
+  return difference >= 0
+    ? Math.ceil(difference / DAY)
+    : -Math.ceil(Math.abs(difference) / DAY)
 }
 
 /** 截止日的中文短标签：今天截止 / 3 天后截止 / 已截止。 */

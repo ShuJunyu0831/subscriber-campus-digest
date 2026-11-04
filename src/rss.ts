@@ -135,10 +135,14 @@ export function parseFeedXml(xml: string, baseUrl?: string): ParsedFeed {
     const title = bareText(rawTitle ?? '')
     if (!title) continue
 
-    // Atom 的地址在 <link href="...">，RSS 在 <link>...</link>
-    const hrefAttr = block.match(/<link\b[^>]*href=["']([^"']+)["']/i)?.[1]
+    // Atom 的地址在 <link href="...">，RSS 在 <link>...</link>。
+    // Atom 可能同时有 alternate / self 多个链接，优先取 rel="alternate"。
+    const atomLinks = [...block.matchAll(/<link\b[^>]*>/gi)].map(match => match[0])
+    const preferredAtom = atomLinks.find(tag => /rel=["']alternate["']/i.test(tag))
+      ?? atomLinks.find(tag => !/rel=["']self["']/i.test(tag))
+    const hrefAttr = preferredAtom?.match(/href=["']([^"']+)["']/i)?.[1]
     const hrefText = pick(block, ['link'])
-    const rawLink = (hrefText && hrefText.trim()) || hrefAttr || ''
+    const rawLink = decodeEntities((hrefText && hrefText.trim()) || hrefAttr || '')
     let link = ''
     if (rawLink) {
       try {

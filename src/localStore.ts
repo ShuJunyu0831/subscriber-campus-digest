@@ -1,4 +1,5 @@
 import type { MessageChannel } from './shareImport'
+import type { InfoItem } from './data'
 
 export interface ShareDraft {
   id: string
@@ -23,8 +24,10 @@ export interface LocalWechatMessage {
 
 const SHARE_DB = 'subscriber-share-inbox'
 const MESSAGE_DB = 'subscriber-local-inbox'
+const INFO_DB = 'subscriber-info-library'
 const SHARE_STORE = 'incoming'
 const MESSAGE_STORE = 'messages'
+const INFO_STORE = 'items'
 
 function openDatabase(name: string, storeName: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -182,6 +185,54 @@ export async function clearLocalMessages(): Promise<void> {
     transaction.onerror = () => {
       db.close()
       reject(transaction.error ?? new Error('无法清空本地消息'))
+    }
+  })
+}
+
+/** 信息库与收藏、完成等用户状态统一保存在本机 IndexedDB。 */
+export async function listInfoItems(): Promise<InfoItem[]> {
+  const db = await openDatabase(INFO_DB, INFO_STORE)
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(INFO_STORE, 'readonly')
+    const request = transaction.objectStore(INFO_STORE).getAll()
+    request.onsuccess = () => {
+      db.close()
+      resolve(request.result as InfoItem[])
+    }
+    request.onerror = () => {
+      db.close()
+      reject(request.error ?? new Error('无法读取本机信息库'))
+    }
+  })
+}
+
+/**
+ * 本机信息库是否已经存过一次。
+ * 删光条目后快照是空数组，如果启动时还按「空 = 没数据，用内置示例」处理，
+ * 被删掉的示例会全部复活；有这个标记就能区分「还没保存过」和「用户删空了」。
+ */
+const INFO_SAVED_KEY = 'subscriber-library-saved'
+
+export function infoSnapshotSaved(): boolean {
+  return readPreference<number>(INFO_SAVED_KEY, 0) > 0
+}
+
+/** 用一次事务替换快照，避免新增条目与勾选状态只写入一半。 */
+export async function saveInfoItems(items: InfoItem[]): Promise<void> {
+  const db = await openDatabase(INFO_DB, INFO_STORE)
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(INFO_STORE, 'readwrite')
+    const store = transaction.objectStore(INFO_STORE)
+    store.clear()
+    for (const item of items) store.put(item)
+    transaction.oncomplete = () => {
+      db.close()
+      writePreference(INFO_SAVED_KEY, Date.now())
+      resolve()
+    }
+    transaction.onerror = transaction.onabort = () => {
+      db.close()
+      reject(transaction.error ?? new Error('无法保存本机信息库'))
     }
   })
 }

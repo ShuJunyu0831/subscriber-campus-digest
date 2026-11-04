@@ -199,6 +199,9 @@ html { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .discover-button .icon-button { width: 34px; height: 34px; flex: 0 0 auto; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--ink-3); position: relative; transition: background .16s, color .16s; }
 .icon-button:hover { background: var(--surface-2); color: var(--seal); }
 .icon-button.active { color: var(--seal); background: var(--seal-soft); }
+/* 删除入口：平时压到最低存在感，悬停才显红，避免误点也避免卡片上出现第三个抢眼按钮 */
+.icon-button.danger { color: var(--ink-4); }
+.icon-button.danger:hover { color: var(--danger); background: var(--danger-soft); }
 .notification-dot { position: absolute; width: 6px; height: 6px; background: var(--amber); border: 2px solid var(--paper); border-radius: 50%; top: 7px; right: 7px; box-sizing: content-box; }
 .mobile-add, .mobile-nav { display: none; }
 .page-content { width: 100%; max-width: 1120px; margin: 0 auto; padding: 32px 24px 96px; }
@@ -347,6 +350,7 @@ html { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .completed-tile-mark svg { color: var(--seal); }
 .completed-tile .icon-button { color: var(--ink-4); }
 .completed-tile:hover .icon-button { color: var(--ink-3); }
+.completed-tile-actions { display: flex; align-items: center; gap: 2px; }
 @media (prefers-reduced-motion: reduce) {
   .completed-tile { transition: none; opacity: 1; }
 }
@@ -567,8 +571,12 @@ html { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .drawer-footer > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .drawer-footer strong { font-size: 13px; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .drawer-footer span { font-size: 12px; color: var(--ink-4); }
-.toast { position: fixed; z-index: 200; left: 50%; bottom: 28px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 32px); padding: 12px 16px; border-radius: 8px; background: var(--panel); color: var(--panel-ink); box-shadow: var(--shadow-3); font-size: 13px; animation: toast-in .22s ease-out; }
+.toast { position: fixed; z-index: 200; left: 50%; bottom: 28px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 32px); padding: 12px 16px; border-radius: 8px; background: var(--panel); color: var(--panel-ink); box-shadow: var(--shadow-3); font-size: 13px; animation: toast-in .22s ease-out; pointer-events: none; }
 .toast svg { color: var(--panel-ink-2); flex: 0 0 auto; }
+.toast-text { line-height: 1.5; }
+/* 提示条整体不接鼠标事件（免得挡住页面），撤销按钮必须单独放开 */
+.toast-action { pointer-events: auto; flex: 0 0 auto; margin-left: 6px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--panel-line); background: transparent; color: var(--panel-ink); font-size: 12px; font-weight: 600; }
+.toast-action:hover { border-color: var(--panel-ink-2); background: var(--panel-line); }
 .spin { animation: spin .8s linear infinite; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -1305,3 +1313,56 @@ html { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .drop-overlay-card span { font-size: 12px; color: var(--ink-2); }
 @keyframes dropOverlayIn { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .drop-overlay { animation: none; } }
+
+/* ---------- 导入结果确认 ---------- */
+.import-preview h3 { margin: 14px 0 8px; font-size: 20px; line-height: 1.45; color: var(--ink); }
+.import-preview .detail-summary { margin-bottom: 16px; }
+.import-preview .detail-section { margin-top: 14px; }
+.preview-note {
+  margin-top: 18px; padding: 10px 12px;
+  border-left: 3px solid var(--seal);
+  background: var(--surface-2);
+  color: var(--ink-2); font-size: 12px; line-height: 1.7;
+}
+
+/* ---------- 删除：单条入口 + 多选批量 ---------- */
+/* 选中态用书脊色条 + 印色勾选圈，和收藏、完成的强调方式保持一致 */
+.select-mark {
+  width: 18px; height: 18px; flex: 0 0 auto; display: grid; place-items: center;
+  border-radius: 50%; border: 1.5px solid var(--line-strong); background: var(--surface); color: transparent;
+}
+.info-card.is-selecting .card-actions { display: none; }
+.info-card.is-selecting .card-main { padding-right: 20px; }
+.info-card.is-selected { background: var(--seal-soft); }
+.info-card.is-selected .select-mark { border-color: var(--seal); background: var(--seal); color: var(--on-seal); }
+.info-card.is-selected::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--seal); }
+.select-toggle { margin-left: 2px; }
+.select-toggle.active { color: var(--seal); font-weight: 700; }
+
+.selection-bar {
+  position: fixed; z-index: 180; left: 50%; bottom: 24px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 16px; max-width: calc(100vw - 32px);
+  padding: 12px 16px; border: 1px solid var(--line-strong); border-radius: 10px;
+  background: var(--surface); box-shadow: var(--shadow-3);
+}
+.selection-count { flex: 0 0 auto; font-size: 13px; color: var(--ink-2); white-space: nowrap; }
+.selection-count strong { padding: 0 2px; font-size: 15px; color: var(--seal); font-family: var(--font-num); }
+.selection-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
+/* 不锁死 nowrap 的话窄屏会把「全选当前结果」压成一列单字 */
+.selection-bar .text-button { white-space: nowrap; }
+.selection-bar .button { min-height: 34px; padding: 0 12px; font-size: 12px; }
+/* 删除按钮只靠颜色表态，不铺满色块：纸质底上满色按钮太重 */
+.button.danger { background: var(--surface); border: 1px solid var(--line); color: var(--danger); }
+.button.danger:hover { background: var(--danger-soft); border-color: var(--danger); }
+.button.danger:disabled { color: var(--ink-4); border-color: var(--line); background: var(--surface); }
+.app-shell.is-select-mode .toast { bottom: 96px; }
+/* 选择时用不到模型面板，收起来给底部操作条让位 */
+.app-shell.is-select-mode .llm-dock { display: none; }
+
+@media (max-width: 820px) {
+  .selection-bar { bottom: 84px; gap: 10px; padding: 10px 12px; }
+  .app-shell.is-select-mode .toast { bottom: 156px; }
+  .selection-bar .button.secondary { display: none; }
+  /* 移动端搜索栏里「完成」要排在排序之后，否则看起来像切换排序 */
+  .select-toggle { order: 3; }
+}

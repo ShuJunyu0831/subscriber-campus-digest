@@ -89,6 +89,10 @@ function relationOf(article: AccountArticle, library: Classification[]): { relat
     if (articleDeadline > libraryDeadline) relation = 'update'
     else if (articleDeadline < libraryDeadline) relation = 'outdated'
   }
+  // 同事件、同截止时间的「更正/补充」也应能作为新版本入库，而不是被去重按钮锁住。
+  if (relation === 'duplicate' && /更正|修正|补充|变更|调整|取消|恢复|重新/.test(article.title)) {
+    relation = 'update'
+  }
   return { relation, existing: match.item }
 }
 
