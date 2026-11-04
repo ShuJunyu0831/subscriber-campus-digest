@@ -404,6 +404,54 @@ test('完成回顾可按本周 / 本月 / 全部切换并分组', async ({ page 
   await expect(page.locator('.completed-list article')).toHaveCount(allCount + 1)
 })
 
+test('完成回顾用瀑布流排列：多列不重叠，窄屏自动单列', async ({ page }) => {
+  await openHome(page)
+  // 先攒够卡片，单列布局看不出瀑布流
+  await page.locator('.main-nav').getByRole('button', { name: /全部信息/ }).click()
+  const cards = page.locator('.library-list .info-card')
+  for (let index = 0; index < 6; index += 1) {
+    const button = cards.nth(index).getByRole('button', { name: '标记完成' })
+    if (await button.count()) await button.click()
+  }
+  await page.locator('.main-nav').getByRole('button', { name: /完成回顾/ }).click()
+
+  const grid = page.locator('.completed-masonry').first()
+  await expect(grid).toBeVisible()
+
+  const measure = () => grid.locator('.completed-tile').evaluateAll(nodes => nodes.map(node => {
+    const rect = node.getBoundingClientRect()
+    return { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) }
+  }))
+
+  const boxes = await measure()
+  expect(boxes.length).toBeGreaterThanOrEqual(6)
+
+  // 宽屏应该排成多列
+  expect(new Set(boxes.map(box => box.x)).size).toBeGreaterThan(1)
+
+  // 任意两张卡片不能重叠（这就是绝对定位最容易翻车的地方）
+  for (let a = 0; a < boxes.length; a += 1) {
+    for (let b = a + 1; b < boxes.length; b += 1) {
+      const first = boxes[a]
+      const second = boxes[b]
+      const overlap = first.x < second.x + second.w && second.x < first.x + first.w
+        && first.y < second.y + second.h && second.y < first.y + first.h
+      expect(overlap, `卡片 ${a} 与 ${b} 重叠`).toBe(false)
+    }
+  }
+
+  // 容器高度覆盖到最下面一张卡片，否则后面的内容会被压住
+  const gridBox = await grid.boundingBox()
+  const lowest = Math.max(...boxes.map(box => box.y + box.h))
+  expect(gridBox!.y + gridBox!.height + 1).toBeGreaterThanOrEqual(lowest)
+
+  // 窄屏退回单列
+  await page.setViewportSize({ width: 390, height: 900 })
+  await page.waitForTimeout(500)
+  const narrow = await measure()
+  expect(new Set(narrow.map(box => box.x)).size).toBe(1)
+})
+
 test('公众号文章可以打开演示全文阅读', async ({ page }) => {
   await openHome(page)
   await page.locator('.main-nav').getByRole('button', { name: /消息与订阅/ }).click()

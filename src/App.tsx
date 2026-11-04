@@ -44,6 +44,7 @@ import { classifyLibrary, deadlineDays, deadlineLabel, findExistingItem, inferCa
 import { officialAccounts, type AccountArticle } from './accounts'
 import GradientASCII from './GradientASCII'
 import SplitText from './SplitText'
+import Masonry from './Masonry'
 import WechatInbox from './WechatInbox'
 import LlmPicker from './LlmPicker'
 import TaxonomyModal from './TaxonomyModal'
@@ -1063,7 +1064,24 @@ export default function App() {
                 {reviewGroups.map(group => (
                   <Fragment key={group.key}>
                     <div className="completed-group-head"><span>{group.label}</span><small>{group.items.length} 项</small></div>
-                    {group.items.map(item => <article key={item.id}><span className="completed-check"><Check size={17} /></span><button className="completed-copy" onClick={() => openItem(item)}><span><Tag category={item.category} /><small>{item.completedAt}完成</small></span><h3>{item.title}</h3><p>{item.summary}</p></button><IconButton label="取消完成" onClick={() => toggleComplete(item.id)}><RotateCcwIcon /></IconButton></article>)}
+                    <Masonry className="completed-masonry" minColumnWidth={248} gap={14} maxColumns={4} label={`${group.label}完成的项目`}>
+                      {group.items.map(item => (
+                        <article key={item.id} className="completed-tile">
+                          <div className="completed-tile-top">
+                            <Tag category={item.category} />
+                            <span className="completed-tile-date">{item.completedAt}</span>
+                          </div>
+                          <button className="completed-copy" onClick={() => openItem(item)}>
+                            <h3>{item.title}</h3>
+                            <p>{item.summary}</p>
+                          </button>
+                          <div className="completed-tile-foot">
+                            <span className="completed-tile-mark"><Check size={13} />已完成</span>
+                            <IconButton label="取消完成" onClick={() => toggleComplete(item.id)}><RotateCcwIcon /></IconButton>
+                          </div>
+                        </article>
+                      ))}
+                    </Masonry>
                   </Fragment>
                 ))}
               </div>

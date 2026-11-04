@@ -8,7 +8,7 @@
 ## 一、一句话现状
 
 Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 GitHub 私有仓库，
-`npm test` **25 组 Playwright 全绿**、`npm run build` 通过。
+`npm test` **26 组 Playwright 全绿**、`npm run build` 通过。
 
 本轮（11-03）补齐了四件事：**信息分类/版本/去重引擎、公众号订阅、赛事官网一键入口、右下角模型选择**；
 随后打通了 **P0 真实数据链路**（`npm run collect` 官网直采 + 快照 + 桌面版实时抓取，详见待办区 P0）、
@@ -31,7 +31,7 @@ Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 
 ```bash
 npm install
 npm run dev              # 开发：http://127.0.0.1:5173
-npm test                 # Web 端 25 组 Playwright（约 50 秒）
+npm test                 # Web 端 26 组 Playwright（约 50 秒）
 npm run build            # 类型检查 + 生产构建
 npm run collect          # 真实抓取竞赛官网 → src/live/competitions.json + 桌面版采集器
 
@@ -142,6 +142,7 @@ src/
   llmClient.ts        真实模型调用（localStorage 凭据 + OpenAI 兼容 chat/completions）
   GradientASCII.tsx   全屏 WebGL2 多 Pass ASCII 背景
   SplitText.tsx       逐字动画标题
+  Masonry.tsx         瀑布流布局（最短列放置 + 交错入场 + ResizeObserver 重排），完成回顾使用
   WechatInbox.tsx     消息与订阅（本机消息箱、批量导入、逐条 AI 分析、关注源/公众号分区）
   shareImport.ts      批量粘贴文本拆分（来源名行识别、空行兜底），纯函数、无副作用
   dropImport.ts       拖放读取（同步取 DataTransfer → 异步读文件 / 解压 zip / 展开文件夹、大小与类型护栏），纯函数
@@ -157,7 +158,7 @@ electron/             主进程（IPC：live:fetch / live:fetch-custom / rss:fet
 electron/share-args.cjs  外部转发参数解析（协议链接 / --share-text / --share-file），纯函数、被验证脚本直接断言
 electron/live/        collector.cjs（npm run collect 生成，已 gitignore）
 .github/workflows/ci.yml  CI：build + Playwright（Node 20 + Chromium）
-tests/prototype.spec.ts   25 组 Playwright 用例
+tests/prototype.spec.ts   26 组 Playwright 用例
 ```
 
 ---
@@ -377,7 +378,7 @@ E. 验证
   拆成可保存条目、松手后提示收起，检查项 18 → **22**。
 - 压缩包支持再加 4 项（真实 deflate 包走 `tests/fixtures/chat-export.zip`，2 个 UTF-8 txt + 1 个 GBK txt + 1 个 html + 1 个 png）：
   能解开、拆出 4 条（png 被跳过）、GBK 不出乱码、html 已剥标签，检查项 22 → **26**。
-- Playwright 新增 2 组（公众号链接订阅识别账号读正文并入库；拖入文件/文字进入批量导入），共 **25 组**
+- Playwright 新增 2 组（公众号链接订阅识别账号读正文并入库；拖入文件/文字进入批量导入），共 **26 组**
   （另加「拖入非文本文件给出明确提示」与「拖入 .zip 聊天记录也能解开导入」两组）。
 
 F. 导出格式的拆分修复（`shareImport.ts`）
@@ -390,6 +391,27 @@ F. 导出格式的拆分修复（`shareImport.ts`）
 - 来源名：`readDroppedContent()` 现在会给出 `suggestedName`（压缩包取内部文件名、单文件取文件名、
   文件夹取目录名，并去掉 `_20261104_000456` 这种导出时间戳后缀），App 透传给批量导入，
   不再显示「未命名来源 1」。
+
+**P7 — 完成回顾改成瀑布流（2026-11-04）**
+
+- 目标：已完成的项目从「一行一条」的列表改成参考 react-bits Masonry 的瀑布流，更好地展示成果。
+- **为什么不直接装那个组件**：`npx shadcn@latest add @react-bits/Masonry-JS-CSS` 在这个项目里跑不出东西
+  （项目没有 `components.json`、没有 `@` 别名，CLI 静默退出）。把 registry 的源码拉下来看（`https://reactbits.dev/r/Masonry-JS-TW.json`，
+  约 1000 行）后发现它的 tile 内容是**硬编码的 `<img src={item.img}>`**，还捆了 lightbox、拖动排序、视差，
+  依赖 `@hugeicons/react` 和 `@hugeicons/core-free-icons`。回顾页要展示的是文字卡片（标题/摘要/分类/完成时间），
+  没有图片也没有灯箱，硬套只能塞占位图，还会多两条无用依赖。
+- 落地：自己写 `src/Masonry.tsx`（约 100 行），只保留它的**布局思路与入场节奏**：
+  - 容器宽度用 `ResizeObserver` 跟随；列数 = `min(maxColumns, 容器能放下的列数, 卡片数)`，
+    最后一项很重要——只有 2 条记录时不该被压成 4 列里的 2 条窄卡。
+  - 每次排布先统一设置卡片宽度再量 `offsetHeight`（顺序反了会按旧宽度测量，全部错位），
+    然后放进当前最矮的一列，写回 `translate3d`，最后把容器高度设成最高列的高度。
+  - 入场：`opacity 0 / blur(7px)` → `.masonry-in`，`transitionDelay` 按序号递进 45ms；
+    用 `data-shown` 保证只播一次，重排时不闪。`prefers-reduced-motion` 下直接可见。
+  - 不用 `role="list"`（卡片是 `article`，强行加 list 会让读屏念错），只在传了 label 时给 `role="group"`。
+- 卡片：`.completed-tile` 白卡 + 分类标签 + 完成日期 + 标题 + 摘要（`-webkit-line-clamp: 4`）+ 底部「已完成 / 取消完成」。
+  原来那套 `.completed-list article` 的横向布局样式已删除，避免与绝对定位打架。
+- 测试：新增「完成回顾用瀑布流排列：多列不重叠，窄屏自动单列」，断言多列、两两不重叠、
+  容器高度覆盖最下面一张卡片、390px 下退回单列。
 
 ---
 
@@ -427,7 +449,7 @@ F. 导出格式的拆分修复（`shareImport.ts`）
 直接粘贴：
 
 > 继续 Subscriber 项目，路径 `D:/workbuddy/2026-10-31-18-32-31`，先读 `HANDOFF.md` 和
-> `.workbuddy/memory/` 下的记录。Web 版与 Windows 桌面版都已完成，`npm test` 25 组全绿，
+> `.workbuddy/memory/` 下的记录。Web 版与 Windows 桌面版都已完成，`npm test` 26 组全绿，
 > 已具备分类/版本/去重引擎、公众号订阅与 RSS 真实订阅、四个官网直采源、赛事官网入口与模型选择。
 > 我想继续做 **（写你这次要做的具体事）**。
 

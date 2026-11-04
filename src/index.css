@@ -226,15 +226,38 @@ html { scrollbar-width: thin; scrollbar-color: rgba(45, 98, 82, .28) transparent
 .review-stats span { font-size: 9px; color: rgba(255,255,255,.6); }
 .completed-section { margin-top: 32px; }
 .manual-note { display: inline-flex; align-items: center; gap: 5px; color: #8d978f; font-size: 9px; }
-.completed-list { background: #fff; border: 1px solid var(--line); border-radius: 15px; overflow: hidden; }
-.completed-list article { display: flex; align-items: center; gap: 15px; padding: 18px 18px 18px 22px; border-bottom: 1px solid #e9ede8; }
-.completed-list article:last-child { border-bottom: 0; }
-.completed-check { width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 50%; color: var(--accent); background: var(--accent-soft); }
-.completed-copy { flex: 1; min-width: 0; text-align: left; border: 0; background: transparent; padding: 0; }
-.completed-copy > span { display: flex; align-items: center; gap: 9px; }
-.completed-copy small { font-size: 9px; color: #9ba39c; }
-.completed-copy h3 { font-size: 13px; margin: 8px 0 4px; }
-.completed-copy p { margin: 0; font-size: 10px; line-height: 1.6; color: #879088; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.completed-list { background: transparent; border: 0; border-radius: 0; overflow: visible; }
+
+/* 完成回顾：瀑布流（Masonry.tsx 负责定位，这里只定样式与入场节奏） */
+.masonry { position: relative; width: 100%; }
+.masonry > * { position: absolute; top: 0; left: 0; margin: 0; will-change: transform; }
+.completed-tile {
+  display: flex; flex-direction: column; gap: 11px;
+  padding: 16px 17px 13px; text-align: left;
+  background: #fff; border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(31, 61, 52, .05);
+  opacity: 0; filter: blur(7px);
+  transition: transform .52s cubic-bezier(.22,.68,.28,1), opacity .5s ease, filter .5s ease,
+              box-shadow .22s ease, border-color .22s ease;
+}
+.completed-tile.masonry-in { opacity: 1; filter: none; }
+.completed-tile:hover { border-color: #cfdbd2; box-shadow: 0 10px 24px rgba(31, 61, 52, .09); }
+.completed-tile-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.completed-tile-date { font-size: 9px; color: #9ba39c; letter-spacing: .02em; white-space: nowrap; }
+.completed-copy { border: 0; background: transparent; padding: 0; text-align: left; }
+.completed-copy h3 { font-size: 13px; line-height: 1.5; margin: 0 0 7px; }
+.completed-copy p {
+  margin: 0; font-size: 10px; line-height: 1.72; color: #879088;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+.completed-tile-foot { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding-top: 4px; }
+.completed-tile-mark { display: inline-flex; align-items: center; gap: 5px; font-size: 9px; color: var(--accent); letter-spacing: .02em; }
+.completed-tile-mark svg { color: var(--accent); }
+.completed-tile .icon-button { color: #a8b1a9; }
+.completed-tile:hover .icon-button { color: #7a877d; }
+@media (prefers-reduced-motion: reduce) {
+  .completed-tile { transition: none; opacity: 1; filter: none; }
+}
 
 .wechat-heading { align-items: center; }
 .wechat-heading-actions { display: flex; align-items: center; gap: 10px; }
@@ -583,8 +606,8 @@ html { scrollbar-width: thin; scrollbar-color: rgba(45, 98, 82, .28) transparent
   .review-hero h2 { font-size: 26px; }
   .review-stats { gap: 7px; }
   .review-stats > div { flex: 1; width: auto; height: 82px; }
-  .completed-list article { padding-left: 15px; gap: 10px; }
-  .completed-copy p { max-width: 220px; }
+  .completed-tile { padding: 14px 14px 11px; }
+  .completed-copy p { -webkit-line-clamp: 5; }
   .import-tabs { margin: 0 20px; }
   .discover-result { align-items: flex-start; padding: 14px; }
   .discover-result .button { padding: 0 10px; min-height: 35px; font-size: 10px; }
@@ -986,7 +1009,8 @@ html { scrollbar-width: thin; scrollbar-color: rgba(45, 98, 82, .28) transparent
 .review-periods button span { font-size: 8px; padding: 1px 5px; border-radius: 4px; background: rgba(255,255,255,.7); color: #8b958d; }
 .review-periods button.active { background: #fff; color: var(--accent); font-weight: 700; box-shadow: 0 2px 7px rgba(38,57,45,.06); }
 .review-periods button.active span { background: var(--accent-soft); color: var(--accent); }
-.completed-group-head { display: flex; align-items: center; justify-content: space-between; padding: 11px 20px; background: #f7faf6; border-bottom: 1px solid #e9ede8; font-size: 9px; letter-spacing: .04em; color: #7a877d; }
+.completed-group-head { display: flex; align-items: baseline; justify-content: space-between; padding: 0 2px 9px; margin: 24px 0 13px; background: transparent; border-bottom: 1px solid #e6ebe4; font-size: 9.5px; letter-spacing: .04em; color: #7a877d; }
+.completed-group-head:first-child { margin-top: 0; }
 .completed-group-head small { font-size: 8px; color: #9ba39c; }
 .review-footnote { display: flex; align-items: center; gap: 6px; margin: 12px 4px 0; font-size: 9px; color: #8b958d; }
 
@@ -1040,7 +1064,7 @@ html { scrollbar-width: thin; scrollbar-color: rgba(45, 98, 82, .28) transparent
   .library-searchbar { gap: 8px; }
   .sort-switch { order: 2; }
   .review-periods { width: 100%; justify-content: space-between; }
-  .completed-group-head { padding: 10px 15px; }
+  .completed-group-head { padding: 0 2px 8px; }
   .reader-text p { font-size: 11px; }
 }
 
