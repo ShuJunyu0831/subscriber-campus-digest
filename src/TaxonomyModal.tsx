@@ -17,7 +17,7 @@ export default function TaxonomyModal({ library, onClose, onOpenGroup }: {
     <div className="modal-backdrop" onMouseDown={onClose}>
       <section className="modal modal-wide taxonomy-modal" role="dialog" aria-modal="true" aria-label="分类与版本规则" onMouseDown={event => event.stopPropagation()}>
         <div className="modal-header">
-          <div><span className="eyebrow">CLASSIFICATION ENGINE</span><h2>信息是怎么被归类的</h2></div>
+          <div><h2>信息是怎么被归类的</h2></div>
           <button type="button" className="icon-button" aria-label="关闭" onClick={onClose}><X size={20} /></button>
         </div>
         <div className="modal-body">

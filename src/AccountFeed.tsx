@@ -621,7 +621,7 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
         <div className="modal-backdrop" onMouseDown={() => setManagerOpen(false)}>
           <section className="modal modal-wide" role="dialog" aria-modal="true" aria-label="公众号订阅管理" onMouseDown={event => event.stopPropagation()}>
             <div className="modal-header">
-              <div><span className="eyebrow">SUBSCRIPTION MANAGER</span><h2>公众号订阅管理</h2></div>
+              <div><h2>公众号订阅管理</h2></div>
               <button type="button" className="icon-button" aria-label="关闭" onClick={() => setManagerOpen(false)}><X size={20} /></button>
             </div>
             <div className="modal-body">
@@ -654,7 +654,7 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
         <div className="modal-backdrop" onMouseDown={() => { if (!draftBusy) setAddOpen(false) }}>
           <section className="modal" role="dialog" aria-modal="true" aria-label="添加订阅源" onMouseDown={event => event.stopPropagation()}>
             <div className="modal-header">
-              <div><span className="eyebrow">RSS / ATOM 订阅</span><h2>添加订阅源</h2></div>
+              <div><h2>添加订阅源</h2></div>
               <button type="button" className="icon-button" aria-label="关闭" onClick={() => setAddOpen(false)} disabled={draftBusy}><X size={20} /></button>
             </div>
             <div className="modal-body">
@@ -675,7 +675,7 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
         <div className="modal-backdrop" onMouseDown={() => { if (!wxBusy) setWxOpen(false) }}>
           <section className="modal" role="dialog" aria-modal="true" aria-label="订阅公众号" onMouseDown={event => event.stopPropagation()}>
             <div className="modal-header">
-              <div><span className="eyebrow">粘贴文章链接订阅</span><h2>订阅公众号</h2></div>
+              <div><h2>订阅公众号</h2></div>
               <button type="button" className="icon-button" aria-label="关闭" onClick={() => setWxOpen(false)} disabled={wxBusy}><X size={20} /></button>
             </div>
             <div className="modal-body">
@@ -707,7 +707,7 @@ export default function AccountFeed({ library, subscribed, onToggleSubscribe, on
         <div className="modal-backdrop" onMouseDown={() => setReader(null)}>
           <section className="modal modal-wide article-reader" role="dialog" aria-modal="true" aria-label="文章全文预览" onMouseDown={event => event.stopPropagation()}>
             <div className="modal-header">
-              <div><span className="eyebrow">{reader.article.fullTextOrigin === 'rss' ? 'RSS 全文 · 真实抓取' : reader.article.fullTextOrigin === 'wechat' ? '公众号原文 · 链接抓取' : 'ARTICLE READER · 演示全文'}</span><h2>{reader.article.title}</h2></div>
+              <div><span className="eyebrow">{reader.article.fullTextOrigin === 'rss' ? 'RSS 全文 · 真实抓取' : reader.article.fullTextOrigin === 'wechat' ? '公众号原文 · 链接抓取' : '演示全文'}</span><h2>{reader.article.title}</h2></div>
               <button type="button" className="icon-button" aria-label="关闭" onClick={() => setReader(null)}><X size={20} /></button>
             </div>
             <div className="modal-body reader-body">

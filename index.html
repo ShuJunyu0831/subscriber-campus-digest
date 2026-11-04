@@ -3,12 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f5f6f2" />
+    <meta name="theme-color" content="#f2efe6" />
     <meta name="description" content="Subscriber——面向大学生的竞赛、新闻与课程通知整理助手。" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
     <title>Subscriber · 今日精选</title>
+    <script>
+      // 在首帧之前定好主题，避免深色模式下闪一下白
+      try {
+        var saved = localStorage.getItem('subscriber-theme')
+        if (saved === 'light' || saved === 'dark') document.documentElement.setAttribute('data-theme', saved)
+        else if (saved === 'system') document.documentElement.removeAttribute('data-theme')
+      } catch (error) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

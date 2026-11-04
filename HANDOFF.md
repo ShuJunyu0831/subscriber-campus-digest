@@ -8,7 +8,7 @@
 ## 一、一句话现状
 
 Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 GitHub 私有仓库，
-`npm test` **26 组 Playwright 全绿**、`npm run build` 通过。
+`npm test` **27 组 Playwright 全绿**、`npm run build` 通过、`desktop:verify` 33 项全过。
 
 本轮（11-03）补齐了四件事：**信息分类/版本/去重引擎、公众号订阅、赛事官网一键入口、右下角模型选择**；
 随后打通了 **P0 真实数据链路**（`npm run collect` 官网直采 + 快照 + 桌面版实时抓取，详见待办区 P0）、
@@ -31,7 +31,7 @@ Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 
 ```bash
 npm install
 npm run dev              # 开发：http://127.0.0.1:5173
-npm test                 # Web 端 26 组 Playwright（约 50 秒）
+npm test                 # Web 端 27 组 Playwright（约 50 秒）
 npm run build            # 类型检查 + 生产构建
 npm run collect          # 真实抓取竞赛官网 → src/live/competitions.json + 桌面版采集器
 
@@ -77,9 +77,19 @@ npm run desktop:verify   # 拉起打包后的 exe 跑 26 项检查（含 IPC 探
 ## 四、已经做完的事
 
 **Web 界面**
-- 顶部 sticky 导航 + 全屏 ASCII 背景 + 居中玻璃内容层。
-- 首屏今日摘要弹框，分层错峰弹出；四个页面 h1 接入 SplitText 逐字入场。
+- 顶部 sticky 导航 + 居中内容层。
+- 首屏今日摘要弹框，分层错峰弹出；次要页面 h1 保留 SplitText 逐字入场（首页标题改为纯文本）。
 - 修掉改版引入的对比度问题（白色副标题、分享提示落在背景上不可见等）。
+
+**2026-11-04 视觉重构（去 AI 味 + 深色模式）**
+- 342 个硬编码 hex 收敛为 20 个语义变量（纸 / 墨 / 印 + 状态色 + 深色面板），组件里不再出现具体色值。
+- 三态外观：跟随系统 / 浅色 / 深色，`localStorage` 记忆，`index.html` 前置脚本防闪白；顶栏新增切换按钮。
+- 删掉全屏 WebGL2 ASCII 噪点背景（`GradientASCII.tsx`）、毛玻璃层（`backdrop-filter` 全部移除）、
+  渐变封面（摘要封皮、回顾头图、公众号头图改深色面板 + 日期戳）、发光文字与全大写宽字距英文标签。
+- 字号整体抬档：原来 8–10px 的说明文字统一到 12px，正文 13–14px；间距对齐 4px 网格；圆角按尺寸分档。
+- 首页从「问候语 + 空头图 + 单列」改为「事实型标题 + 信息卡 / 右栏两栏」，右栏放截止时间线与本周完成。
+- 重算墨阶对比度：正文 14:1、次级 7.5:1、说明 6:1、最弱 4.7:1，深浅两套都过 AA。
+- 新增 Playwright 用例「外观可跟随系统、切到浅色或深色，并记住选择」；`desktop:verify` 增至 33 项。
 
 **桌面版**
 - Electron 45，`contextIsolation + sandbox`，`file://` 加载，单实例锁，外链交给系统浏览器。
@@ -140,7 +150,7 @@ src/
   LlmPicker.tsx       右下角模型选择面板（含真实模型接入设置区）
   llmModels.ts        国内常见模型清单 + VENDOR_ENDPOINTS（9 家厂商端点预设）
   llmClient.ts        真实模型调用（localStorage 凭据 + OpenAI 兼容 chat/completions）
-  GradientASCII.tsx   全屏 WebGL2 多 Pass ASCII 背景
+  theme.ts            三态主题：跟随系统 / 浅色 / 深色，localStorage 记忆 + 首帧前置脚本
   SplitText.tsx       逐字动画标题
   Masonry.tsx         瀑布流布局（最短列放置 + 交错入场 + ResizeObserver 重排），完成回顾使用
   WechatInbox.tsx     消息与订阅（本机消息箱、批量导入、逐条 AI 分析、关注源/公众号分区）
@@ -158,7 +168,7 @@ electron/             主进程（IPC：live:fetch / live:fetch-custom / rss:fet
 electron/share-args.cjs  外部转发参数解析（协议链接 / --share-text / --share-file），纯函数、被验证脚本直接断言
 electron/live/        collector.cjs（npm run collect 生成，已 gitignore）
 .github/workflows/ci.yml  CI：build + Playwright（Node 20 + Chromium）
-tests/prototype.spec.ts   26 组 Playwright 用例
+tests/prototype.spec.ts   27 组 Playwright 用例
 ```
 
 ---
@@ -175,7 +185,11 @@ tests/prototype.spec.ts   26 组 Playwright 用例
 6. **每份摘要只给一份**，不做信息流无限刷新。
 7. 预算目标：每月 200 元以内，需要用户额度与处理频率控制。
 8. 首版文件范围：文字、Word、PDF、图片、普通 PPT。扫描件增强、超大 PPT、视频后置。
-9. **不要说「已接入微信」。** 微信没有面向第三方应用的订阅号读取接口。内置公众号账号仍是演示数据；
+9. **颜色只走语义变量。** `src/index.css` 顶部是唯一允许写色值的地方（`--paper / --ink-1..4 / --seal / --amber / --danger / --panel` 等）。组件里写 `#fff` 或 `rgba()` 会在深色模式下变成白斑，这条别开口子。
+10. **只有一个强调色。** 墨绿 `--seal` 承担所有「可点/已选」；琥珀与赭红只表示时效与风险，不做装饰；渠道徽标之类原来用紫/蓝的地方一律收进中性阶。
+11. **不做渐变、毛玻璃、发光。** 深色面板（摘要封皮、回顾头图、公众号头图、提示条）统一用 `--panel` 系列，靠 `--panel-line` 描边分层，不靠 `backdrop-filter`。
+12. **说明文字的对比度不低于 4.5:1。** 最弱一档是 `--ink-4`（浅色 #6f6a5e / 深色 #7d7a6b），再淡就不合格；需要更弱时改用字号或字重，而不是继续调浅。
+13. **不要说「已接入微信」。** 微信没有面向第三方应用的订阅号读取接口。内置公众号账号仍是演示数据；
    真实订阅走「用户自己提供、已获授权的 RSS / Atom 地址」这条路（`src/rss.ts`），界面标注「真实抓取」，
    抓不到就报错，不许用演示内容顶替失败结果。
 10. **模型选择器不发请求。** 只是界面标签，任何真实调用都要单独做密钥管理、计费提示与失败兜底。
@@ -440,6 +454,10 @@ F. 导出格式的拆分修复（`shareImport.ts`）
 | 弹窗叠弹窗点不到 | `desktop:verify` 里首屏摘要弹框的 `.modal-backdrop` 层级更高，会拦住后面的批量导入弹窗点击。先关摘要弹框，再操作下层弹窗。 |
 | 拖放「拖了没反应」 | 根因：`dragover` 只绑在 `.local-inbox-section` 上。HTML5 规定 dragover 必须 preventDefault 才承认那是合法放置目标，拖到页面其他地方时 `drop` **根本不触发**（Electron 还会顺手去导航那个文件，被 `will-navigate` 拦掉，于是彻底静默）。修法：window 捕获阶段统一 `dragover`/`drop` preventDefault（`src/dropImport.ts` + `App.tsx`），整窗提示用 `pointer-events: none` 的遮罩。 |
 | `DataTransfer` 异步后变空 | `getData()` 只能在事件回调的**同步阶段**读，handler 一旦 await（比如先 `await file.text()`），DataTransfer 进入保护模式被清空，拖「文件 + 文字」时文字部分会静默丢失。现在先同步取 `getData('text/plain')` 与 `data.files`，再去读文件内容。 |
+| 深色模式写了两处 | `@media (prefers-color-scheme: dark)` 与 `:root[data-theme="dark"]` 是两套并列的变量块，改一档要同步改两处（缩进不同，批量替换容易漏）。改完用 `grep -n "ink-4:" src/index.css` 对一遍行数。 |
+| 硬编码颜色把深色打出白斑 | 原本 342 个 hex 散在 1200 行 CSS 里，深色模式一开就到处是白块与浅灰字。现在全部收进语义变量；新增样式若写了具体色值，`desktop:verify` 的「语义色板已注入」与主题测试能兜住主路径，但细则仍靠自觉。 |
+| 次级文字对比度不足 | 第一版 `--ink-4` 用了 #8f8d80，在暖纸底上只有 2.9:1，12px 说明文字几乎看不清。用 WCAG 公式算过再定值：`--ink-3` 6:1、`--ink-4` 4.7:1，深色侧同样过 AA。 |
+| 移除全屏噪点画布 | 原来的 WebGL2 ASCII 背景在文字下方铺一层动效，深色模式下彻底失效，且是典型「AI 生成界面」观感。`GradientASCII.tsx` 已删除，`verify-package.mjs` 反向断言页面上没有 canvas。 |
 | 用户跑的还是旧 exe | 打包目录里同时有多个 `Subscriber.exe` 在跑时，改代码不会生效。改完必须 `taskkill //F //IM Subscriber.exe` 再重打包，`desktop:verify` 会拉起新 exe。 |
 
 ---

@@ -791,3 +791,49 @@ test('微信导出的聊天记录按时间戳逐条拆开，正文里的【标�
   await expect(dialog.locator('.batch-row').nth(1)).toContainText('【选拔赛通知】')
   await expect(dialog.locator('.batch-row').nth(1)).toContainText('【第二临床医学院职业发展协会】')
 })
+
+test('外观可跟随系统、切到浅色或深色，并记住选择', async ({ page }) => {
+  await openHome(page)
+  const root = page.locator('html')
+  const toggle = page.getByRole('button', { name: /外观/ })
+
+  // 默认跟随系统：不写死 data-theme，交给 prefers-color-scheme
+  await expect(toggle).toHaveAttribute('data-theme-state', 'system')
+  await expect(root).not.toHaveAttribute('data-theme', /light|dark/)
+
+  const lightPaper = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--paper').trim())
+
+  await toggle.click()
+  await expect(root).toHaveAttribute('data-theme', 'light')
+  await expect(toggle).toHaveAttribute('data-theme-state', 'light')
+
+  await toggle.click()
+  await expect(root).toHaveAttribute('data-theme', 'dark')
+  const darkPaper = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--paper').trim())
+  expect(darkPaper).not.toBe(lightPaper)
+
+  // 深色下正文与卡片底色必须真的换掉，不能只改页面底色
+  const contrast = await page.evaluate(() => {
+    const body = document.body
+    const card = document.querySelector('.info-card')
+    return {
+      bodyBg: getComputedStyle(body).backgroundColor,
+      cardBg: card ? getComputedStyle(card).backgroundColor : '',
+      text: getComputedStyle(document.querySelector('.card-main h3')!).color,
+    }
+  })
+  expect(contrast.cardBg).not.toBe('rgb(255, 255, 255)')
+  expect(contrast.text).not.toBe('rgb(31, 33, 25)')
+
+  // 刷新后仍然是深色（首屏摘要会重新弹出，先关掉再操作顶栏）
+  await page.reload()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+  const digest = page.getByRole('dialog', { name: '今天，值得关注这些' })
+  if (await digest.isVisible()) await digest.getByRole('button', { name: '开始浏览' }).click()
+
+  // 再点一次回到跟随系统
+  await page.getByRole('button', { name: /外观/ }).click()
+  await expect(page.locator('html')).not.toHaveAttribute('data-theme', /light|dark/)
+})

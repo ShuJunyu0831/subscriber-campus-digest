@@ -26,9 +26,10 @@
 | --- | --- |
 | 框架 | React 19 + TypeScript |
 | 构建 | Vite 6 |
-| 样式 | Tailwind CSS 4 + 自定义 CSS 变量 |
-| 动画 | GSAP + SplitText（逐字入场）、CSS `@keyframes` |
-| 背景 | WebGL2 多 Pass 渐变 ASCII（移植自 React Bits GradientASCII） |
+| 样式 | Tailwind CSS 4 + 一层语义色板（纸 / 墨 / 印，浅色与深色双套） |
+| 动画 | GSAP + SplitText（次要页面逐字入场）、CSS `@keyframes` |
+| 外观 | 跟随系统 / 浅色 / 深色三态，选择存 `localStorage` |
+| 背景 | 无背景动效，暖纸底 + 墨绿印章色 |
 | 桌面 | Electron 45（contextIsolation + sandbox，`file://` 加载） |
 | 测试 | Playwright |
 
@@ -38,15 +39,24 @@
 npm install
 npm run dev      # http://127.0.0.1:5173
 npm run build    # 类型检查 + 生产构建
-npm test         # Playwright 端到端测试（26 组）
+npm test         # Playwright 端到端测试（27 组）
 ```
+
+## 视觉与主题
+
+界面按「纸与墨」来做：暖纸底、墨色文字、只有一个强调色（墨绿印章色 `--seal`），颜色只用来表达时效——临近截止是琥珀、已截止是赭红、进行中是墨绿。
+
+- **色板只有一层。** `src/index.css` 顶部定义 `--paper / --surface / --ink-1..4 / --line / --seal / --amber / --danger / --panel` 等语义变量，组件一律引用变量，不写具体色值。深色模式因此只有一处真相。
+- **三态外观。** 顶栏的太阳/月亮/显示器按钮在「跟随系统 → 浅色 → 深色」之间循环，选择写进 `localStorage['subscriber-theme']`；`index.html` 里有一段前置脚本在首帧前落好 `data-theme`，避免深色下闪白。
+- **对比度地板。** 正文 `--ink` 14:1、次级 `--ink-2` 7.5:1、说明文字 `--ink-3` 6:1、最弱一档 `--ink-4` ≥4.6:1（浅色与深色都过 AA）。没有半透明堆叠，深色下不做「白玻璃」。
+- **不留 AI 味。** 没有渐变文字、没有发光、没有毛玻璃、没有全屏噪点背景、没有全大写宽字距的英文小标签；圆角按尺寸分档（4 / 6 / 8 / 10 / 12），不用药丸形；间距走 4px 网格。
 
 ## 桌面版
 
 ```bash
 npm run desktop           # 构建后以 Electron 直接运行
 npm run desktop:portable  # 组装免安装包到 desktop-dist/Subscriber
-npm run desktop:verify    # 拉起打包后的 exe 做 26 项端到端检查
+npm run desktop:verify    # 拉起打包后的 exe 做 33 项端到端检查
 ```
 
 `desktop:portable` 不使用 electron-builder 的 nsis 目标，而是自行「复制运行时 + 生成 asar + 单文件改名 + 写入图标与版本信息」，全程不做大目录重命名与批量删除。图标由 `build/icon.png` 经 `npm run desktop:icon` 生成七尺寸 `.ico`，再用 `resedit` 写入 PE 资源。
@@ -85,7 +95,7 @@ src/
   LlmPicker.tsx       右下角模型选择
   llmModels.ts        国内常见模型清单
   llmClient.ts        真实模型调用（本机凭据 + OpenAI 兼容接口）
-  GradientASCII.tsx   全屏 WebGL2 ASCII 背景
+  theme.ts            三态主题（跟随系统 / 浅色 / 深色）+ 首帧前置脚本防闪白
   SplitText.tsx       逐字动画标题
   Masonry.tsx         瀑布流布局：最短列放置 + 入场交错，供完成回顾使用
   WechatInbox.tsx     消息与订阅：本机消息箱、批量导入、逐条 AI 分析、三个分区

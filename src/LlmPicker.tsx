@@ -83,7 +83,7 @@ export default function LlmPicker({ value, onChange }: {
         <section className="llm-panel" role="dialog" aria-label="选择分析模型">
           <header className="llm-panel-head">
             <div>
-              <span className="eyebrow">MODEL ROUTER · {credentials ? '已接入' : '演示'}</span>
+              <span className="eyebrow">{credentials ? '已接入真实模型' : '演示模式'}</span>
               <h3>选择用哪个模型分析</h3>
             </div>
             <button type="button" className="icon-button" aria-label="收起模型列表" onClick={() => setOpen(false)}><X size={17} /></button>

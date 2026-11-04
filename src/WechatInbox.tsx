@@ -89,7 +89,7 @@ const channelOf = (message: LocalWechatMessage): MessageChannel => message.chann
 
 function InlineModal({ title, eyebrow, children, onClose, wide = false }: {
   title: string
-  eyebrow: string
+  eyebrow?: string
   children: React.ReactNode
   onClose: () => void
   wide?: boolean
@@ -98,7 +98,7 @@ function InlineModal({ title, eyebrow, children, onClose, wide = false }: {
     <div className="modal-backdrop" onMouseDown={onClose}>
       <section className={`modal ${wide ? 'modal-wide' : ''}`} role="dialog" aria-modal="true" aria-label={title} onMouseDown={event => event.stopPropagation()}>
         <div className="modal-header">
-          <div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2></div>
+          <div>{eyebrow && <span className="eyebrow">{eyebrow}</span>}<h2>{title}</h2></div>
           <button type="button" className="icon-button" aria-label="关闭" onClick={onClose}><X size={20} /></button>
         </div>
         {children}
@@ -417,7 +417,7 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
       <section className="page-heading wechat-heading">
         <div>
           <span className="eyebrow">
-            {tab === 'share' ? 'LOCAL-FIRST MESSAGE INBOX' : tab === 'accounts' ? 'OFFICIAL ACCOUNTS · DEMO FEED' : 'FOLLOWED SOURCES'}
+            {tab === 'share' ? '转进来的消息先存在本机' : tab === 'accounts' ? '公众号 · 演示数据' : '已关注的官网与小程序'}
           </span>
           <SplitText tag="h1" text="消息与订阅" effect="rise" splitType="chars" delay={58} duration={0.8} staggerFrom="start" trigger="load" textAlign="left" className="split-heading" />
           <p>{tab === 'share'
@@ -590,7 +590,7 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
         onImportFromMiniProgram={importFromMiniProgram}
       />}
 
-      {draft && <InlineModal title="导入微信分享" eyebrow={draft.source === 'demo' ? 'DEMO SHARE · 演示数据' : 'SHARED FROM WECHAT'} onClose={closeDraft}>
+      {draft && <InlineModal title="导入微信分享" eyebrow={draft.source === 'demo' ? '演示数据' : '来自微信转发'} onClose={closeDraft}>
         <div className="modal-body">
           <div className="local-save-notice"><HardDrive size={18} /><p><strong>这一步只会保存到本机</strong><span>不会上传云端，也不会自动调用 AI 分析。</span></p></div>
           <div className="field"><span>来源渠道</span>
@@ -612,7 +612,7 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
         <div className="modal-actions"><button className="button secondary" onClick={closeDraft} disabled={saving}>取消</button><button className="button primary" onClick={saveDraft} disabled={saving}>{saving ? <><LoaderCircle className="spin" size={16} />保存中</> : <><HardDrive size={16} />仅保存到本机</>}</button></div>
       </InlineModal>}
 
-      {batch && <InlineModal title="批量导入消息" eyebrow="BATCH IMPORT · 本地优先" onClose={closeBatch} wide>
+      {batch && <InlineModal title="批量导入消息" eyebrow="本地优先" onClose={closeBatch} wide>
         <div className="modal-body">
           <div className="local-save-notice"><HardDrive size={18} /><p><strong>先拆分，再整批落到本机</strong><span>拆分结果可以逐条删掉，保存的只是你留下来的部分。</span></p></div>
           <div className="field"><span>来源渠道</span>
@@ -660,7 +660,7 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
         </div>
       </InlineModal>}
 
-      {analysisOpen && <InlineModal title="确认发送给 AI" eyebrow="EXPLICIT CLOUD CONSENT" onClose={() => !analyzing && setAnalysisOpen(false)} wide>
+      {analysisOpen && <InlineModal title="确认发送给 AI" eyebrow="发送前再确认一次" onClose={() => !analyzing && setAnalysisOpen(false)} wide>
         <div className="modal-body">
           <div className="outbound-warning"><Info size={18} /><p><strong>以下文本将离开本机</strong><span>{realCall
             ? `会逐条发送给你配置的接口（${credentials?.apiModel || modelName}），每次分析仍需在这里确认。`
@@ -677,7 +677,7 @@ export default function WechatInbox({ addItem, notify, modelName, library, onImp
         <div className="modal-actions"><button className="button secondary" onClick={() => setAnalysisOpen(false)} disabled={analyzing}>取消</button><button className="button primary" onClick={analyze} disabled={!analysisConsent || analyzing}>{analyzing ? <><LoaderCircle className="spin" size={16} />正在整理</> : <><Sparkles size={16} />确认并分析</>}</button></div>
       </InlineModal>}
 
-      {rulesOpen && <InlineModal title="本机数据规则" eyebrow="PRIVACY BY DESIGN" onClose={() => setRulesOpen(false)}>
+      {rulesOpen && <InlineModal title="本机数据规则"  onClose={() => setRulesOpen(false)}>
         <div className="modal-body privacy-rule-list">
           <div><strong>不自动读取微信和钉钉</strong><p>Subscriber 没有连接个人账号协议，也不会扫描聊天记录或监听剪贴板。只有你主动分享、粘贴或点“从剪贴板读取”的内容才会进入本机消息箱。</p></div>
           <div><strong>本机存储</strong><p>消息保存在当前浏览器的 IndexedDB 中，不上传云端。清除站点数据、单条删除或清空消息箱都会永久移除记录。</p></div>

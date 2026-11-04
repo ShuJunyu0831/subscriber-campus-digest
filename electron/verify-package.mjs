@@ -100,13 +100,19 @@ try {
     hasBridge: Boolean(window.subscriberDesktop?.isDesktop),
     splitChars: document.querySelectorAll('.split-char').length,
     hasCanvas: Boolean(document.querySelector('.app-backdrop canvas')),
+    themeChoice: document.documentElement.getAttribute('data-theme'),
+    themeButton: Boolean(document.querySelector('[data-theme-state]')),
+    paper: getComputedStyle(document.documentElement).getPropertyValue('--paper').trim(),
     bodyText: document.body.innerText.length,
   }))
   console.log(`页面：${shell.title}（${shell.protocol}，正文 ${shell.bodyText} 字）`)
   check('通过 file:// 加载', shell.protocol === 'file:', shell.protocol)
   check('preload 桥已注入', shell.hasBridge)
-  check('逐字标题已渲染', shell.splitChars > 0, `${shell.splitChars} 个字符`)
-  check('ASCII 背景画布存在', shell.hasCanvas)
+  check('首页标题按文本渲染（不再逐字动画）', shell.splitChars === 0, `${shell.splitChars} 个逐字字符`)
+  check('全屏噪点画布已移除（贴合纸质底纹）', shell.hasCanvas === false)
+  check('语义色板已注入', /^#/.test(shell.paper), shell.paper)
+  check('默认跟随系统外观（未写死 data-theme）', shell.themeChoice === null, String(shell.themeChoice))
+  check('顶栏有主题切换入口', shell.themeButton)
 
   // 2.5 主进程 IPC：实时抓取 / RSS 抓取。
   // collector.cjs 曾经漏打进 asar（源码运行正常、打包版一律报「未打包」），
@@ -244,6 +250,7 @@ try {
 
 
   // 4. 走遍全部导航页面
+  let splitTotal = 0
   for (const [index, label] of NAV.entries()) {
     await page.locator('.main-nav').getByRole('button', { name: new RegExp(label) }).click()
     await page.waitForTimeout(850)
@@ -252,13 +259,15 @@ try {
       cards: document.querySelectorAll('.library-list > *, .review-list > *').length,
       chars: document.querySelectorAll('.split-char').length,
     }))
+    splitTotal += state.chars
     check(
       `${label} 页面正常渲染`,
-      Boolean(state.heading) && state.chars > 0,
+      Boolean(state.heading),
       `标题「${state.heading}」，${state.chars} 个逐字字符`
     )
     await page.screenshot({ path: path.join(shotDir, `desktop-0${index + 2}-${label}.png`) })
   }
+  check('次要页面保留逐字入场动画', splitTotal > 0, `${splitTotal} 个字符`)
 
   check('无运行时错误', pageErrors.length === 0, pageErrors.join(' | '))
 } finally {
