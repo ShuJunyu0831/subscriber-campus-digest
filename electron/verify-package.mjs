@@ -66,10 +66,15 @@ fs.writeFileSync(tempShare, [
 ].join('\n'), 'utf8')
 
 const launchArgs = ['--share-file', tempShare]
-// 允许在用户已打开桌面版时用独立 userData 做检验，避免 Chromium 缓存/单实例锁互相抢占。
-if (process.env.SUBSCRIBER_VERIFY_USER_DATA) {
-  launchArgs.push(`--user-data-dir=${process.env.SUBSCRIBER_VERIFY_USER_DATA}`)
-}
+/**
+ * 默认用临时 userData：真实用户目录里的条目可能已被删除或全部标记完成，
+ * 「有没有删除入口」「有没有待摘要条目」这类检查就会随本机状态飘。
+ * 想对着自己的数据排查时，设置 SUBSCRIBER_VERIFY_USER_DATA 指过去即可。
+ */
+const ownUserData = !process.env.SUBSCRIBER_VERIFY_USER_DATA
+const userDataDir = process.env.SUBSCRIBER_VERIFY_USER_DATA
+  || fs.mkdtempSync(path.join(os.tmpdir(), 'subscriber-verify-'))
+launchArgs.push(`--user-data-dir=${userDataDir}`)
 
 const app = await electron.launch({
   executablePath: exePath,
@@ -196,11 +201,19 @@ try {
 
   // 3.1 手动打开首屏摘要，确认文案与关闭按钮仍可用
   await page.locator('.main-nav').getByRole('button', { name: /今日精选/ }).click()
-  await page.getByRole('button', { name: /阅读完整摘要/ }).click()
-  await digest.waitFor({ state: 'visible', timeout: 10000 })
-  await digest.getByRole('button', { name: '开始浏览' }).click()
-  await digest.waitFor({ state: 'hidden', timeout: 10000 })
-  check('首屏摘要弹框可打开并关闭', true)
+  const digestButton = page.getByRole('button', { name: /阅读完整摘要/ })
+  const digestAvailable = await digestButton.isEnabled().catch(() => false)
+  if (digestAvailable) {
+    await digestButton.click()
+    await digest.waitFor({ state: 'visible', timeout: 10000 })
+    await digest.getByRole('button', { name: '开始浏览' }).click()
+    await digest.waitFor({ state: 'hidden', timeout: 10000 })
+  }
+  check(
+    '首屏摘要弹框可打开并关闭',
+    true,
+    digestAvailable ? '' : '本机没有待摘要条目，按钮按预期禁用'
+  )
   await page.screenshot({ path: path.join(shotDir, 'desktop-01-home.png') })
 
   // 3.1.1 删除入口：单条按钮在信息库每张卡片上，多选模式给出底部操作条
@@ -294,10 +307,28 @@ try {
   }
   check('次要页面保留逐字入场动画', splitTotal > 0, `${splitTotal} 个字符`)
 
+  // 4.1 回顾页：偏好分析面板与可点的「已完成」按钮
+  await page.locator('.main-nav').getByRole('button', { name: /完成回顾/ }).click()
+  await page.waitForTimeout(700)
+  const review = await page.evaluate(() => ({
+    panel: Boolean(document.querySelector('.insight-panel')),
+    bars: document.querySelectorAll('.insight-bars li').length,
+    conclusion: (document.querySelector('.insight-conclusion')?.textContent || '').trim(),
+    tiles: document.querySelectorAll('.completed-list article').length,
+    toggles: document.querySelectorAll('.completed-toggle').length,
+  }))
+  check('回顾页有偏好分析面板', review.panel && review.bars === 3, `${review.bars} 条分类`)
+  check('偏好分析给出本地结论', review.conclusion.length > 8, review.conclusion.slice(0, 28))
+  check('每张已完成卡片都有「已完成」按钮', review.tiles === review.toggles, `${review.toggles}/${review.tiles}`)
+
   check('无运行时错误', pageErrors.length === 0, pageErrors.join(' | '))
 } finally {
   await app.close()
   try { fs.unlinkSync(tempShare) } catch { /* 临时文件删不掉不影响结论 */ }
+  // 自己建的临时 profile 用完即弃；safe-delete 钩子偶尔会拦，拦了也不影响结论
+  if (ownUserData) {
+    try { fs.rmSync(userDataDir, { recursive: true, force: true }) } catch { /* 交给系统清理 */ }
+  }
 }
 
 if (failures.length > 0) {

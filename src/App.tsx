@@ -53,7 +53,8 @@ import WechatInbox from './WechatInbox'
 import LlmPicker from './LlmPicker'
 import TaxonomyModal from './TaxonomyModal'
 import { DEFAULT_MODEL_ID, resolveModel } from './llmModels'
-import { credentialsForModel, summarizeWithLlm } from './llmClient'
+import { credentialsForModel, summarizeWithLlm, analyzeReviewWithLlm } from './llmClient'
+import { buildReviewInsights, describeInsightsForModel, type ReviewInsights } from './reviewInsights'
 import { infoSnapshotSaved, listInfoItems, readPreference, saveInfoItems, writePreference } from './localStore'
 import { enabledLiveSourceIds, readFollows, saveFollows, type FollowedSource } from './follows'
 import { isImportableDrag, readDroppedContent } from './dropImport'
@@ -132,6 +133,16 @@ function IconButton({ label, children, active = false, onClick, className = '' }
   return <button type="button" aria-label={label} title={label} className={`icon-button ${active ? 'active' : ''} ${className}`} onClick={onClick}>{children}</button>
 }
 
+/**
+ * 官网入口的文案。
+ * 只有竞赛才有「赛事」可言，课程通知和新闻点到的是公告页或机构首页，
+ * 写成「赛事官网」会让人以为这是一场比赛。
+ */
+function officialLinkLabel(category: Category, hasHome: boolean): string {
+  if (category === '竞赛') return '赛事官网'
+  return hasHome ? '官网首页' : '原文页面'
+}
+
 function ItemCard({ entry, onOpen, onFavorite, onComplete, onDelete, selectable = false, selected = false, onSelect }: {
   entry: Classification
   onOpen: () => void
@@ -180,7 +191,7 @@ function ItemCard({ entry, onOpen, onFavorite, onComplete, onDelete, selectable 
       {showExtras && (
         <div className="card-extras">
           {item.officialUrl
-            ? <a className="official-link" href={item.officialUrl} target="_blank" rel="noopener noreferrer" aria-label={`打开${item.title}的赛事官网`}>赛事官网<ArrowUpRight size={12} /></a>
+            ? <a className="official-link" href={item.officialUrl} target="_blank" rel="noopener noreferrer" aria-label={`打开${item.title}的${officialLinkLabel(item.category, false)}`}>{officialLinkLabel(item.category, false)}<ArrowUpRight size={12} /></a>
             : item.category === '竞赛' ? <span className="official-missing"><Globe2 size={12} />官网待核对</span> : null}
           {version > 1 && <button type="button" className="extra-note" onClick={onOpen}><GitBranch size={12} />V{version} · 已合并 {entry.versions.length} 个版本</button>}
           {duplicateCount > 0 && <span className="extra-note"><Layers3 size={12} />已自动合并 {duplicateCount} 条重复</span>}
@@ -539,7 +550,7 @@ function DetailDrawer({ entry, onClose, onFavorite, onLike, onComplete, onDelete
               ? <a className="button secondary" href={item.officialUrl} target="_blank" rel="noopener noreferrer">查看原文<ArrowUpRight size={15} /></a>
               : <button className="button secondary" onClick={() => notify('原型保留原文入口，正式版将跳转到原始页面')}>查看原文</button>}
             {(item.officialHome ?? item.officialUrl)
-              ? <a className="button primary" href={item.officialHome ?? item.officialUrl} target="_blank" rel="noopener noreferrer">赛事官网<ArrowUpRight size={15} /></a>
+              ? <a className="button primary" href={item.officialHome ?? item.officialUrl} target="_blank" rel="noopener noreferrer">{officialLinkLabel(item.category, Boolean(item.officialHome))}<ArrowUpRight size={15} /></a>
               : item.category === '竞赛' ? <button className="button secondary" disabled title="尚未核实到官网入口">官网待核对</button> : null}
           </div>
         </div>
@@ -711,6 +722,158 @@ function VersionCompareModal({ entry, resolveItem, onClose }: {
   )
 }
 
+/** 模型偶尔仍会回 markdown，界面上按纯文本呈现，避免出现一堆星号。 */
+function plainModelText(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/^\s*[-*]\s+/gm, '')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\n{2,}/g, '\n')
+    .trim()
+}
+
+type InsightAiState =
+  | { status: 'idle' }
+  | { status: 'confirming' }
+  | { status: 'loading' }
+  | { status: 'done'; text: string }
+  | { status: 'error'; error: string }
+
+/**
+ * 回顾页的偏好分析。
+ * 统计与结论全部在本地算（`reviewInsights.ts`）；只有用户点「用模型分析」并二次确认后，
+ * 才会把标题、分类、标签发给所选厂商——正文原文不出本机。
+ */
+function ReviewInsightPanel({ insights, items, rangeLabel, modelId, modelName, connected, onNotify }: {
+  insights: ReviewInsights
+  items: InfoItem[]
+  rangeLabel: string
+  modelId: string
+  modelName: string
+  connected: boolean
+  onNotify: (message: string) => void
+}) {
+  const [state, setState] = useState<InsightAiState>({ status: 'idle' })
+  const abortRef = useRef<AbortController | null>(null)
+  useEffect(() => () => abortRef.current?.abort(), [])
+
+  const send = async () => {
+    const credentials = credentialsForModel(modelId)
+    if (!credentials) {
+      setState({ status: 'idle' })
+      onNotify('还没有接入真实模型：先在右下角选好模型并填入自己的 API Key')
+      return
+    }
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    setState({ status: 'loading' })
+    try {
+      const text = await analyzeReviewWithLlm(describeInsightsForModel(insights, items, rangeLabel), credentials, controller.signal)
+      setState({ status: 'done', text: plainModelText(text) })
+    } catch (error) {
+      if (controller.signal.aborted) return
+      setState({ status: 'error', error: error instanceof Error ? error.message : String(error) })
+    }
+  }
+
+  const busy = state.status === 'loading'
+  const basis = insights.completedCount > 0
+    ? `这段完成 ${insights.completedCount} 项，另有 ${insights.consideredCount - insights.completedCount} 项在收藏或喜欢里`
+    : `这段还没有完成记录，先看收藏或喜欢的 ${insights.consideredCount} 项`
+
+  return (
+    <section className="insight-panel" aria-labelledby="insight-title">
+      <div className="insight-head">
+        <div>
+          <h2 id="insight-title"><Sparkles size={16} />偏好分析</h2>
+          <p>{basis}</p>
+        </div>
+        <button
+          type="button"
+          className="button secondary insight-ai-button"
+          disabled={busy || state.status === 'confirming'}
+          onClick={() => {
+            if (state.status === 'done' || state.status === 'error') { setState({ status: 'confirming' }); return }
+            // 现场再读一次凭据：用户可能刚在右下角填完 Key，父组件的 connected 还没刷新
+            if (!credentialsForModel(modelId)) {
+              onNotify('还没有接入真实模型：先在右下角选好模型并填入自己的 API Key')
+              return
+            }
+            setState({ status: 'confirming' })
+          }}
+        >
+          {busy ? <><LoaderCircle className="spin" size={15} />分析中…</> : <><Sparkles size={15} />{state.status === 'done' ? '重新分析' : `用 ${modelName} 分析`}</>}
+        </button>
+      </div>
+
+      <div className="insight-grid">
+        <div className="insight-block">
+          <h3>分类分布</h3>
+          <ul className="insight-bars">
+            {insights.categories.map(slice => (
+              <li key={slice.key}>
+                <span className="insight-bar-label">{slice.label}</span>
+                <span className="insight-bar" aria-hidden="true"><span className="insight-bar-fill" style={{ width: `${Math.round(slice.ratio * 100)}%` }} /></span>
+                <span className="insight-bar-count">{slice.count}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="insight-block">
+          <h3>常出现的主题</h3>
+          {insights.themes.length > 0
+            ? <div className="insight-tags">{insights.themes.map(slice => <span className="insight-tag" key={slice.key}>{slice.label}<small>{slice.count}</small></span>)}</div>
+            : <p className="insight-muted">标签还不够多，再攒几条记录就能看出主题。</p>}
+        </div>
+        <div className="insight-block">
+          <h3>主要来源</h3>
+          {insights.sources.length > 0
+            ? <ul className="insight-sources">{insights.sources.map(slice => <li key={slice.key}><span>{slice.label}</span><small>{slice.count} 条</small></li>)}</ul>
+            : <p className="insight-muted">暂无来源记录。</p>}
+        </div>
+      </div>
+
+      <p className="insight-conclusion">{insights.summary}</p>
+
+      <div className="insight-ai" aria-live="polite">
+        {state.status === 'confirming' && (
+          <div className="ai-confirm">
+            <p>将把 {items.length} 条记录的标题、分类与标签发送给 {modelName}，不包含正文原文。确认后再发送。</p>
+            <div className="ai-confirm-actions">
+              <button type="button" className="text-button" onClick={() => setState({ status: 'idle' })}>取消</button>
+              <button type="button" className="button primary" onClick={() => { void send() }}>确认发送</button>
+            </div>
+          </div>
+        )}
+        {state.status === 'loading' && <p className="insight-muted"><LoaderCircle className="spin" size={14} />正在让 {modelName} 读这 {items.length} 条记录…</p>}
+        {state.status === 'done' && (
+          <div className="ai-note-block">
+            <div className="ai-note-head"><span>{modelName} 的点评</span><small>只依据本机完成与收藏记录 · 模型可能说错</small></div>
+            <p>{state.text}</p>
+          </div>
+        )}
+        {state.status === 'error' && (
+          <div className="ai-error">
+            <CircleAlert size={15} />
+            <div><strong>没能拿到模型点评</strong><p>{state.error}</p></div>
+            <button type="button" className="text-button" onClick={() => { setState({ status: 'confirming' }) }}>再试一次</button>
+          </div>
+        )}
+        {state.status === 'idle' && (
+          <p className="insight-muted">
+            {connected
+              ? `本机统计不需要联网；点右上角可以让 ${modelName} 写一段点评，发送前会再确认一次。`
+              : '上面的结论由本机记录直接算出，不需要联网；接入自己的模型后，可以让它写一段更具体的点评。'}
+          </p>
+        )}
+      </div>
+    </section>
+  )
+}
+
 export default function App() {
   const [view, setView] = useState<View>('today')
   const [items, setItems] = useState<InfoItem[]>(() => [...initialItems, ...buildLiveItems()])
@@ -792,6 +955,19 @@ export default function App() {
     const end = new Date(start.getTime() + 6 * DAY_MS)
     return `${start.getMonth() + 1}月${start.getDate()}日 — ${end.getMonth() + 1}月${end.getDate()}日`
   }, [reviewPeriod])
+  /** 偏好统计：完成记录按当前区间，收藏与喜欢不分区间的全部可见条目。 */
+  const reviewConsidered = useMemo(() => {
+    const pool = new Map<number, InfoItem>()
+    for (const entry of reviewEntries) pool.set(entry.item.id, entry.item)
+    for (const item of visibleItems) if (item.favorite || item.liked) pool.set(item.id, item)
+    return [...pool.values()]
+  }, [reviewEntries, visibleItems])
+  const reviewInsights = useMemo(() => buildReviewInsights({
+    completed: reviewEntries.map(entry => entry.item),
+    favorites: visibleItems.filter(item => item.favorite),
+    liked: visibleItems.filter(item => item.liked),
+  }), [reviewEntries, visibleItems])
+
   const dailyItems = visibleItems.filter(item => item.daily && !item.completed)
   const upcoming = useMemo(() => visibleItems
     .map(item => ({ item, days: deadlineDays(item) }))
@@ -1273,11 +1449,20 @@ export default function App() {
 
           {view === 'review' && <>
             <section className="page-heading"><div><SplitText tag="h1" text="完成回顾" effect="rise" splitType="chars" delay={58} duration={0.8} staggerFrom="start" trigger="load" textAlign="left" className="split-heading" /><p>不只看还有多少要做，也看看你已经走了多远。</p></div><span className="date-range"><CalendarDays size={16} />{reviewRange}</span></section>
-            <section className="review-hero"><div><span className="briefing-label"><Sparkles size={15} />{REVIEW_PERIOD_LABEL[reviewPeriod]}回顾</span><h2>{REVIEW_PERIOD_PHRASE[reviewPeriod]}完成了 <em>{reviewItems.length}</em> 件事</h2><p>你参与了 {reviewItems.filter(i => i.category === '课程通知').length} 项课程与活动，关注了 {reviewItems.filter(i => i.category === '竞赛').length} 项竞赛。完成记录均由你手动勾选，Subscriber只做整理。</p><button className="light-button" onClick={() => notify('已根据最新完成记录刷新摘要')}><Sparkles size={16} />刷新回顾摘要</button></div><div className="review-stats"><div><strong>{reviewItems.length}</strong><span>完成项目</span></div><div><strong>{visibleItems.filter(i => i.liked).length}</strong><span>喜欢内容</span></div><div><strong>{visibleItems.filter(i => i.favorite).length}</strong><span>收藏信息</span></div></div></section>
+            <section className="review-hero"><div><span className="briefing-label"><Sparkles size={15} />{REVIEW_PERIOD_LABEL[reviewPeriod]}回顾</span><h2>{REVIEW_PERIOD_PHRASE[reviewPeriod]}完成了 <em>{reviewItems.length}</em> 件事</h2><p>完成记录由你手动勾选，Subscriber 只做整理；下面的偏好分析会把收藏与喜欢一起算进去。</p><button className="light-button" onClick={() => document.getElementById('insight-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}><Sparkles size={16} />看偏好分析</button></div><div className="review-stats"><div><strong>{reviewItems.length}</strong><span>完成项目</span></div><div><strong>{visibleItems.filter(i => i.liked).length}</strong><span>喜欢内容</span></div><div><strong>{visibleItems.filter(i => i.favorite).length}</strong><span>收藏信息</span></div></div></section>
+            <ReviewInsightPanel
+              key={reviewPeriod}
+              insights={reviewInsights}
+              items={reviewConsidered}
+              rangeLabel={reviewRange}
+              modelId={modelId}
+              modelName={model.name}
+              connected={Boolean(credentialsForModel(modelId))}
+              onNotify={notify}
+            />
             <section className="section-block completed-section">
               <div className="section-heading">
-                <div><h2>已完成的项目</h2><span>{reviewItems.length} 条</span></div>
-                <div className="review-periods" role="group" aria-label="回顾时间范围">
+                <div><h2>已完成的项目</h2><span>{reviewItems.length} 条</span></div>                <div className="review-periods" role="group" aria-label="回顾时间范围">
                   {(['week', 'month', 'all'] as const).map(period => (
                     <button key={period} type="button" className={reviewPeriod === period ? 'active' : ''} aria-pressed={reviewPeriod === period} onClick={() => setReviewPeriod(period)}>
                       {REVIEW_PERIOD_LABEL[period]}<span>{reviewCounts[period]}</span>
@@ -1301,9 +1486,16 @@ export default function App() {
                             <p>{item.summary}</p>
                           </button>
                           <div className="completed-tile-foot">
-                            <span className="completed-tile-mark"><Check size={13} />已完成</span>
+                            <button
+                              type="button"
+                              className="completed-toggle"
+                              aria-pressed="true"
+                              title="再点一次取消完成，条目会回到信息库"
+                              onClick={() => toggleComplete(item.id)}
+                            >
+                              <Check size={13} />已完成
+                            </button>
                             <div className="completed-tile-actions">
-                              <IconButton label="取消完成" onClick={() => toggleComplete(item.id)}><RotateCcwIcon /></IconButton>
                               <IconButton label={`删除${item.title}`} onClick={() => deleteEntry(item.id)} className="danger"><Trash2 size={17} /></IconButton>
                             </div>
                           </div>
@@ -1354,8 +1546,4 @@ export default function App() {
       </div>}
     </div>
   )
-}
-
-function RotateCcwIcon() {
-  return <ArrowLeft size={18} />
 }

@@ -412,6 +412,15 @@ test('赛事卡片提供官网一键入口，缺失时标注待核对', async ({
 
   const aiCard = page.locator('.library-list .info-card').filter({ hasText: '人工智能创新应用竞赛' })
   await expect(aiCard.locator('.official-missing')).toContainText('官网待核对')
+
+  // 课程通知与新闻不是比赛，官网入口不能写成「赛事官网」
+  const others = page.locator('.library-list .info-card')
+    .filter({ has: page.locator('.category-tag.news, .category-tag.course') })
+    .locator('.official-link')
+  expect(await others.count()).toBeGreaterThan(0)
+  for (let index = 0; index < await others.count(); index += 1) {
+    await expect(others.nth(index)).not.toContainText('赛事官网')
+  }
 })
 
 test('右下角可切换国内大模型并记住选择', async ({ page }) => {
@@ -531,6 +540,80 @@ test('完成回顾可按本周 / 本月 / 全部切换并分组', async ({ page 
   await expect(periods.getByRole('button', { name: /本周/ })).toContainText('1')
   await periods.getByRole('button', { name: /全部/ }).click()
   await expect(page.locator('.completed-list article')).toHaveCount(allCount + 1)
+})
+
+test('回顾页的已完成按钮可以直接取消完成', async ({ page }) => {
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /完成回顾/ }).click()
+  const tiles = page.locator('.completed-list article')
+  const before = await tiles.count()
+  const toggle = tiles.first().getByRole('button', { name: '已完成', exact: true })
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+
+  await toggle.click()
+  await expect(page.locator('.toast')).toContainText('已取消完成标记')
+  await expect(tiles).toHaveCount(before - 1)
+  await expect(page.locator('.review-periods').getByRole('button', { name: /全部/ })).toContainText(String(before - 1))
+})
+
+test('回顾页按完成、收藏与喜欢给出偏好分析', async ({ page }) => {
+  await openHome(page)
+  await page.locator('.main-nav').getByRole('button', { name: /完成回顾/ }).click()
+  const insight = page.locator('.insight-panel')
+  await expect(insight).toBeVisible()
+  await expect(insight.locator('.insight-bars li')).toHaveCount(3)
+  await expect(insight.locator('.insight-tag').first()).toBeVisible()
+  await expect(insight.locator('.insight-conclusion')).toContainText('更常关注')
+  await expect(insight).toContainText('不需要联网')
+
+  // 没接入模型时只提示，不弹确认、不发请求
+  await insight.getByRole('button', { name: /分析/ }).click()
+  await expect(page.locator('.toast')).toContainText('还没有接入真实模型')
+  await expect(insight.locator('.ai-confirm')).toHaveCount(0)
+})
+
+test('接入模型后可以请模型点评回顾数据（mock 验证）', async ({ page }) => {
+  let sent: { model?: string; messages?: { role: string; content: string }[] } | null = null
+  await page.route('**/chat/completions*', async route => {
+    const request = route.request()
+    if (request.method() === 'OPTIONS') {
+      await route.fulfill({
+        status: 204,
+        headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'authorization, content-type' },
+      })
+      return
+    }
+    sent = request.postDataJSON()
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify({ choices: [{ message: { content: '**你更偏向竞赛类**，尤其关注英语演讲与挑战杯，可以留意科研训练项目。' } }] }),
+    })
+  })
+
+  await openHome(page)
+  await page.locator('.llm-trigger').click()
+  const panel = page.getByRole('dialog', { name: '选择分析模型' })
+  await panel.getByRole('button', { name: /接入真实模型/ }).click()
+  await panel.getByLabel('API Key').fill('sk-insight-test')
+  await panel.getByRole('button', { name: '保存并接入' }).click()
+  await expect(panel).toContainText('已接入')
+  await page.locator('.llm-trigger').click()
+
+  await page.locator('.main-nav').getByRole('button', { name: /完成回顾/ }).click()
+  const insight = page.locator('.insight-panel')
+  await insight.getByRole('button', { name: /分析/ }).click()
+  const confirm = page.locator('.ai-confirm')
+  await expect(confirm).toContainText('不包含正文原文')
+  await confirm.getByRole('button', { name: '确认发送' }).click()
+
+  const note = page.locator('.ai-note-block')
+  await expect(note).toContainText('你更偏向竞赛类')
+  // 模型偶尔仍带 markdown 星号，界面上按纯文本呈现
+  await expect(note).not.toContainText('**')
+  expect(sent?.messages?.[0].content).toContain('回顾助手')
+  expect(sent?.messages?.[1].content).toContain('参与统计')
 })
 
 test('完成回顾用瀑布流排列：多列不重叠，窄屏自动单列', async ({ page }) => {

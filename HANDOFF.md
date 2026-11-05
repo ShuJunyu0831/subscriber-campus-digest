@@ -8,7 +8,7 @@
 ## 一、一句话现状
 
 Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 GitHub 私有仓库，
-`npm test` **30 组 Playwright 全绿**（三套用例共 47 项）、`npm run build` 通过、`desktop:verify` 39 项全过。
+`npm test` **33 组 Playwright 全绿**（三套用例共 50 项）、`npm run build` 通过、`desktop:verify` 42 项全过。
 
 本轮（11-03）补齐了四件事：**信息分类/版本/去重引擎、公众号订阅、赛事官网一键入口、右下角模型选择**；
 随后打通了 **P0 真实数据链路**（`npm run collect` 官网直采 + 快照 + 桌面版实时抓取，详见待办区 P0）、
@@ -31,7 +31,7 @@ Subscriber 原型已完成 **Web 版 + Windows 免安装桌面版**，代码在 
 ```bash
 npm install
 npm run dev              # 开发：http://127.0.0.1:5173
-npm test                 # Web 端 47 项 Playwright（prototype 30 组，约 27 秒）
+npm test                 # Web 端 50 项 Playwright（prototype 33 组，约 29 秒）
 npm run build            # 类型检查 + 生产构建
 npm run collect          # 真实抓取竞赛官网 → src/live/competitions.json + 桌面版采集器
 
@@ -105,6 +105,18 @@ npm run desktop:verify   # 拉起打包后的 exe 跑 26 项检查（含 IPC 探
 - 新增 Playwright 用例「删除单条信息后可以撤销，删除结果跨刷新保留」「信息库可以多选删除，撤销后按原顺序恢复」
   「删空信息库后重启不会把内置示例装回来」；`desktop:verify` 增至 39 项（新增删除入口与多选操作条两检查）。
 
+**2026-11-05 回顾页：可点的「已完成」与偏好分析**
+- 完成卡片底部的静态「已完成」改成按钮（`aria-pressed`），再点一次取消完成，条目回到信息库；重复的取消图标删掉。
+- 新增 `src/reviewInsights.ts`（纯函数）：按**完成 + 收藏 + 喜欢去重**统计分类分布、主题 Top 6、来源 Top 3，
+  并生成一句中文结论。只看完成记录的话，一周没结束面板就是空的，所以把收藏与喜欢也算进来。
+- 回顾页新增「偏好分析」面板：分类条、主题标签、来源列表、结论句；统计与结论全部本地算，不联网。
+- 「用模型分析」走真实接口（`analyzeReviewWithLlm`）：先弹一行确认「将发送 N 条记录的标题、分类与标签，
+  不含正文原文」，确认后才请求；返回文本按纯文本渲染（清掉模型偶尔带的 markdown 星号），
+  失败时保留本地结论并显示原因，可重试。`llmClient` 的 fetch/超时/报错抽成 `requestChat`，导入与点评共用。
+- 文案修正：官网入口不再对课程通知与新闻写「赛事官网」——按分类显示「赛事官网 / 官网首页 / 原文页面」。
+- 回顾页头图里的「刷新回顾摘要」原本只弹一个 toast，改成「看偏好分析」滚动到面板。
+- 新增 3 组 Playwright 用例（已完成按钮、偏好分析、模型点评 mock）；`desktop:verify` 增至 42 项。
+
 **桌面版**
 - Electron 45，`contextIsolation + sandbox`，`file://` 加载，单实例锁，外链交给系统浏览器。
 - 自定义打包脚本绕开 electron-builder 在本机的目录重命名失败；图标与版本信息写入 exe。
@@ -175,6 +187,7 @@ src/
   FollowSources.tsx   关注源：竞赛官网勾选与自定义抓取、小程序登记与卡片导入
   follows.ts          关注配置读写（localStorage）+ 信息库过滤用的 liveSourceId 集合
   localStore.ts       IndexedDB 本地存储（消息含 channel / analyzedAt、批量写入）+ `readPreference/writePreference`
+  reviewInsights.ts   回顾页偏好统计（完成 / 收藏 / 喜欢去重 → 分类、主题、来源、结论）+ 给模型的文本摘要
   data.ts             演示数据、InfoItem / NewItemInput / AddItemResult 类型
   index.css           全部样式（新功能样式集中在文件末尾）
 scripts/collect.mjs   真实采集脚本（esbuild 打包 liveSource → Node 抓取 → 写快照 + 桌面版采集器）
@@ -182,7 +195,7 @@ electron/             主进程（IPC：live:fetch / live:fetch-custom / rss:fet
 electron/share-args.cjs  外部转发参数解析（协议链接 / --share-text / --share-file），纯函数、被验证脚本直接断言
 electron/live/        collector.cjs（npm run collect 生成，已 gitignore）
 .github/workflows/ci.yml  CI：build + Playwright（Node 20 + Chromium）
-tests/prototype.spec.ts   30 组 Playwright 用例
+tests/prototype.spec.ts   33 组 Playwright 用例
 ```
 
 ---
@@ -212,6 +225,10 @@ tests/prototype.spec.ts   30 组 Playwright 用例
     只删当前版本会让旧结论（比如 11 月 3 日的截止时间）重新变成首页结论，比不删更误导。
 15. **删除必须给撤销，不用 `window.confirm`。** 提示条给 8 秒窗口、撤销按原索引插回；
     系统确认框在 Electron 里阻塞渲染、还会打断正在输入的表单。
+16. **偏好分析的口径固定为「完成 + 收藏 + 喜欢」去重。** 只看完成，周初面板就是空的；
+    只看收藏，又看不出真正做过什么。改口径要同时改 `src/reviewInsights.ts` 与测试断言。
+17. **模型点评必须先确认再发送，且只发标题、分类与标签。** 与导入链路的「上云需确认」保持一致，
+    不要为了少一次点击改成点一下就静默请求。
 
 技术侧：
 
@@ -484,6 +501,8 @@ F. 导出格式的拆分修复（`shareImport.ts`）
 | 删空后示例数据复活 | `listInfoItems()` 返回空数组**不等于**「从没存过」。`saveInfoItems` 成功时写 `subscriber-library-saved`，加载时只有「从未保存过」才回退内置示例，否则用户删掉的条目重启后全部回来。 |
 | 撤销按钮点不动 | `.toast` 为了不挡页面设了 `pointer-events: none`，里面的 `.toast-action` 必须单独 `pointer-events: auto`，否则按钮看得见点不着。 |
 | 选择条把文字压成竖排 | 选择条是 `position: fixed` 的 flex，`.text-button` 没写 `white-space: nowrap` 时，390px 下「全选当前结果」会被压成一列单字；窄屏还要把 `.llm-dock` 收起来给操作条让位。 |
+| 回顾页文案和统计口径打架 | 头图原本写「关注了 0 项竞赛」，而下面的面板按「完成 + 收藏 + 喜欢」算出竞赛占 60%，用户会以为数据算错。头图只讲完成记录，口径差异交给面板的说明行。 |
+| 模型返回带 markdown | 点评里常有 `**加粗**`，直接塞进 `<p>` 会露出星号。`plainModelText()` 清掉代码块、标题、列表与反引号，再用 `white-space: pre-wrap` 保留换行。 |
 
 ---
 

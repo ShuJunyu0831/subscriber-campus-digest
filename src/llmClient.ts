@@ -102,6 +102,54 @@ function asText(value: unknown): string | undefined {
 }
 
 export async function summarizeWithLlm(text: string, credentials: LlmCredentials, signal?: AbortSignal): Promise<LlmSummary> {
+  const content = await requestChat(credentials, {
+    system: SYSTEM_PROMPT,
+    user: text.slice(0, 6000),
+    temperature: 0.2,
+  }, signal)
+  const parsed = extractJson(content)
+  if (parsed) {
+    const keyPoints = Array.isArray(parsed.keyPoints)
+      ? parsed.keyPoints.filter((point): point is string => typeof point === 'string' && point.trim().length > 0).slice(0, 6)
+      : []
+    const deadline = asText(parsed.deadline)
+    const evidence = asText(parsed.evidence)
+    return {
+      summary: asText(parsed.summary) ?? content.trim().slice(0, 160),
+      keyPoints,
+      deadline: deadline && deadline !== 'null' ? deadline : undefined,
+      evidence,
+      raw: content,
+    }
+  }
+  // 模型没按 JSON 返回：整段当摘要，诚实标注待核对
+  return { summary: content.trim().slice(0, 160), keyPoints: [], raw: content }
+}
+
+const REVIEW_SYSTEM_PROMPT = [
+  '你是大学生信息订阅应用的回顾助手。用户会给你一份「完成、收藏、喜欢」记录的统计与标题清单。',
+  '请只输出一段 120–180 字的中文点评，不要 markdown、不要列表、不要分段、不要复述统计数字。',
+  '要点：1）指出用户更偏爱哪类内容（竞赛 / 课程与活动 / 新闻），并点出具体的赛事或课程名；',
+  '2）指出一个可能被忽略的方向；3）给一条具体可执行的建议。',
+  '只能依据给出的数据，不要编造用户没做过的项目；数据不足以判断时直接说明。',
+].join('\n')
+
+/** 回顾页的模型点评：输入是统计摘要，输出是一段自然语言，不要求 JSON。 */
+export async function analyzeReviewWithLlm(payload: string, credentials: LlmCredentials, signal?: AbortSignal): Promise<string> {
+  const content = await requestChat(credentials, {
+    system: REVIEW_SYSTEM_PROMPT,
+    user: payload.slice(0, 6000),
+    temperature: 0.5,
+  }, signal)
+  return content.trim()
+}
+
+/** 抽出来的单次对话请求：整理导入与回顾点评共用，鉴权、超时与报错只有一处。 */
+async function requestChat(
+  credentials: LlmCredentials,
+  request: { system: string; user: string; temperature: number },
+  signal?: AbortSignal,
+): Promise<string> {
   const base = credentials.baseUrl.trim().replace(/\/+$/, '')
   const apiKey = credentials.apiKey.trim()
   if (!base || !apiKey) throw new Error('接入信息不完整（缺少接口地址或 API Key）')
@@ -119,10 +167,10 @@ export async function summarizeWithLlm(text: string, credentials: LlmCredentials
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model: apiModel,
-        temperature: 0.2,
+        temperature: request.temperature,
         messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: text.slice(0, 6000) },
+          { role: 'system', content: request.system },
+          { role: 'user', content: request.user },
         ],
       }),
       signal: controller.signal,
@@ -134,23 +182,7 @@ export async function summarizeWithLlm(text: string, credentials: LlmCredentials
     const payload = JSON.parse(await response.text()) as { choices?: { message?: { content?: string } }[] }
     const content = payload.choices?.[0]?.message?.content ?? ''
     if (!content.trim()) throw new Error('模型返回为空')
-    const parsed = extractJson(content)
-    if (parsed) {
-      const keyPoints = Array.isArray(parsed.keyPoints)
-        ? parsed.keyPoints.filter((point): point is string => typeof point === 'string' && point.trim().length > 0).slice(0, 6)
-        : []
-      const deadline = asText(parsed.deadline)
-      const evidence = asText(parsed.evidence)
-      return {
-        summary: asText(parsed.summary) ?? content.trim().slice(0, 160),
-        keyPoints,
-        deadline: deadline && deadline !== 'null' ? deadline : undefined,
-        evidence,
-        raw: content,
-      }
-    }
-    // 模型没按 JSON 返回：整段当摘要，诚实标注待核对
-    return { summary: content.trim().slice(0, 160), keyPoints: [], raw: content }
+    return content
   } catch (error) {
     if (controller.signal.aborted && !signal?.aborted) throw new Error('请求超时（30 秒），请检查接口地址或稍后再试')
     if (error instanceof Error) throw error
